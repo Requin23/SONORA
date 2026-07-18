@@ -27,13 +27,26 @@ function toOrder(row: PrismaOrder): Order {
   };
 }
 
-export async function listOrders() {
-  const rows = await prisma.order.findMany();
-  return rows.map(toOrder).sort((a, b) => {
+function sortByDeadline(orders: Order[]) {
+  return orders.sort((a, b) => {
     const left = a.deadline ? new Date(a.deadline).getTime() : Number.MAX_SAFE_INTEGER;
     const right = b.deadline ? new Date(b.deadline).getTime() : Number.MAX_SAFE_INTEGER;
     return left - right;
   });
+}
+
+// Reservee a l'admin (toutes les commandes, tous clients confondus). Protegee
+// en amont par le middleware (Basic Auth sur /api/admin/*).
+export async function listOrders() {
+  const rows = await prisma.order.findMany();
+  return sortByDeadline(rows.map(toOrder));
+}
+
+// Cote client : ne retourne que les commandes du compte connecte (filtrage
+// par email de session, verifie en amont dans la route API).
+export async function listOrdersForUser(email: string) {
+  const rows = await prisma.order.findMany({ where: { userEmail: email } });
+  return sortByDeadline(rows.map(toOrder));
 }
 
 export async function getOrder(id: string) {

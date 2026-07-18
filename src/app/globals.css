@@ -67,6 +67,20 @@ nav a {
   font-weight: 700;
 }
 
+nav button.button {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 700;
+  padding: 0;
+}
+
+nav button.button:hover {
+  color: var(--accent-strong);
+}
+
 .hero {
   align-items: end;
   background:

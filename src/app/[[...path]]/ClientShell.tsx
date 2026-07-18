@@ -13,10 +13,14 @@ const steps = ["Occasion", "Style", "Contenu", "References", "Pratique", "Recapi
 
 const statusFlow = ["PAYEE", "EN_PRODUCTION", "EN_REVISION", "LIVREE", "ANNULEE"] as const;
 
+type AuthUser = { id: string; email: string; name?: string };
+
 export default function ClientShell({ path }: Props) {
   const route = `/${path.join("/")}`;
   const router = useRouter();
   const [orders, setOrders] = useState<Order[]>([]);
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
   const [selectedOffer, setSelectedOffer] = useState("offer-standard");
   const [selectedOccasion, setSelectedOccasion] = useState("occ-anniversaire");
   const [step, setStep] = useState(0);
@@ -32,16 +36,37 @@ export default function ClientShell({ path }: Props) {
     dureeSouhaitee: 120,
     deadline: "",
   });
-  const [identity, setIdentity] = useState({ userName: "", userEmail: "" });
   const [message, setMessage] = useState("");
   const [activeOrderId, setActiveOrderId] = useState(path[1] ?? "");
 
   useEffect(() => {
-    void refreshOrders();
-  }, []);
+    void bootstrap();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route]);
 
-  async function refreshOrders() {
-    const response = await fetch("/api/orders", { cache: "no-store" });
+  async function bootstrap() {
+    const me = await fetchAuthUser();
+    setAuthUser(me);
+    setAuthChecked(true);
+
+    if (route.startsWith("/admin")) {
+      await refreshOrders("/api/admin/orders");
+    } else if (me) {
+      await refreshOrders("/api/orders");
+    } else {
+      setOrders([]);
+    }
+  }
+
+  async function fetchAuthUser(): Promise<AuthUser | null> {
+    const response = await fetch("/api/auth/me", { cache: "no-store" });
+    if (!response.ok) return null;
+    const data = (await response.json()) as { user: AuthUser | null };
+    return data.user;
+  }
+
+  async function refreshOrders(endpoint: string) {
+    const response = await fetch(endpoint, { cache: "no-store" });
     if (response.ok) {
       const data = (await response.json()) as { orders: Order[] };
       setOrders(data.orders);
@@ -56,10 +81,57 @@ export default function ClientShell({ path }: Props) {
   const currentOffer = getOffer(selectedOffer) ?? offers[1];
   const currentOccasion = getOccasion(selectedOccasion) ?? occasions[0];
 
+  async function login(email: string, password: string) {
+    setMessage("");
+    const response = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    const data = (await response.json()) as { user?: AuthUser; error?: string };
+    if (!response.ok || !data.user) {
+      setMessage(data.error ?? "Connexion impossible.");
+      return;
+    }
+    setAuthUser(data.user);
+    setMessage(`Bienvenue ${data.user.name ?? data.user.email} !`);
+    router.push("/compte");
+  }
+
+  async function signup(name: string, email: string, password: string) {
+    setMessage("");
+    const response = await fetch("/api/auth/signup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, email, password }),
+    });
+    const data = (await response.json()) as { user?: AuthUser; error?: string };
+    if (!response.ok || !data.user) {
+      setMessage(data.error ?? "Inscription impossible.");
+      return;
+    }
+    setAuthUser(data.user);
+    setMessage(`Compte cree, bienvenue ${data.user.name ?? data.user.email} !`);
+    router.push("/compte");
+  }
+
+  async function logout() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    setAuthUser(null);
+    setOrders([]);
+    setMessage("Deconnexion reussie.");
+    router.push("/");
+  }
+
   async function createOrder() {
     setMessage("");
-    if (!identity.userEmail || !form.destinataire || !form.genreMusical) {
-      setMessage("Renseigne au minimum l'email, le destinataire et le style musical.");
+    if (!authUser) {
+      setMessage("Connecte-toi ou cree un compte pour passer commande.");
+      router.push("/connexion");
+      return;
+    }
+    if (!form.destinataire || !form.genreMusical) {
+      setMessage("Renseigne au minimum le destinataire et le style musical.");
       return;
     }
     const response = await fetch("/api/orders", {
@@ -68,8 +140,6 @@ export default function ClientShell({ path }: Props) {
       body: JSON.stringify({
         offerId: currentOffer.id,
         occasionId: currentOccasion.id,
-        userName: identity.userName,
-        userEmail: identity.userEmail,
         requestForm: form,
       }),
     });
@@ -109,7 +179,7 @@ export default function ClientShell({ path }: Props) {
     });
     const data = (await response.json()) as { order?: Order };
     if (data.order) setActiveOrderId(data.order.id);
-    await refreshOrders();
+    await refreshOrders(route.startsWith("/admin") ? "/api/admin/orders" : "/api/orders");
     setMessage("Paiement confirme (webhook simule). La commande est dans la file admin.");
   }
 
@@ -119,7 +189,7 @@ export default function ClientShell({ path }: Props) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status }),
     });
-    await refreshOrders();
+    await refreshOrders("/api/admin/orders");
   }
 
   async function addDeliverable(orderId: string, fileUrl: string, format: "mp3" | "wav") {
@@ -128,7 +198,7 @@ export default function ClientShell({ path }: Props) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ fileUrl, format }),
     });
-    await refreshOrders();
+    await refreshOrders("/api/admin/orders");
     setMessage("Livrable ajoute et email de livraison pret a etre declenche.");
   }
 
@@ -139,25 +209,28 @@ export default function ClientShell({ path }: Props) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ note }),
     });
-    await refreshOrders();
+    await refreshOrders("/api/orders");
   }
 
   return (
     <main>
-      <Navigation />
+      <Navigation authUser={authUser} logout={logout} />
       {message ? <div className="notice">{message}</div> : null}
       {route === "/" && <Home />}
       {route === "/occasions" && <Occasions />}
       {path[0] === "occasions" && path[1] && <OccasionDetail slug={path[1]} setSelectedOccasion={setSelectedOccasion} />}
       {route === "/offres" && <Offers selectedOffer={selectedOffer} setSelectedOffer={setSelectedOffer} />}
-      {route === "/commande/nouvelle" && (
+      {route === "/connexion" && authChecked && !authUser && <AuthForm login={login} signup={signup} />}
+      {route === "/connexion" && authUser && <StaticPage title="Deja connecte" body={`Tu es connecte en tant que ${authUser.email}.`} />}
+      {route === "/commande/nouvelle" && authChecked && !authUser && (
+        <AuthForm login={login} signup={signup} intro="Cree un compte ou connecte-toi pour commander : ca nous permet de lier ta commande a ton suivi personnel." />
+      )}
+      {route === "/commande/nouvelle" && authUser && (
         <OrderWizard
           step={step}
           setStep={setStep}
           form={form}
           setForm={setForm}
-          identity={identity}
-          setIdentity={setIdentity}
           selectedOffer={selectedOffer}
           selectedOccasion={selectedOccasion}
           setSelectedOffer={setSelectedOffer}
@@ -170,7 +243,10 @@ export default function ClientShell({ path }: Props) {
       )}
       {path[0] === "commande" && path[2] === "suivi" && activeOrder && <Tracking order={activeOrder} />}
       {route === "/premium" && <Premium />}
-      {route === "/compte" && <ClientDashboard orders={orders} setActiveOrderId={setActiveOrderId} />}
+      {route === "/compte" && authChecked && !authUser && (
+        <AuthForm login={login} signup={signup} intro="Connecte-toi pour retrouver tes commandes." />
+      )}
+      {route === "/compte" && authUser && <ClientDashboard orders={orders} setActiveOrderId={setActiveOrderId} />}
       {path[0] === "compte" && path[1] === "commandes" && activeOrder && (
         <OrderDetail order={activeOrder} requestRevision={requestRevision} />
       )}
@@ -184,7 +260,7 @@ export default function ClientShell({ path }: Props) {
   );
 }
 
-function Navigation() {
+function Navigation({ authUser, logout }: { authUser: AuthUser | null; logout: () => void }) {
   return (
     <header className="topbar">
       <Link className="brand" href="/">Sonora</Link>
@@ -193,10 +269,64 @@ function Navigation() {
         <Link href="/offres">Offres</Link>
         <Link href="/commande/nouvelle">Commander</Link>
         <Link href="/premium">Premium</Link>
-        <Link href="/compte">Compte</Link>
+        {authUser ? (
+          <>
+            <Link href="/compte">Compte ({authUser.name ?? authUser.email})</Link>
+            <button className="button" onClick={logout}>Deconnexion</button>
+          </>
+        ) : (
+          <Link href="/connexion">Connexion</Link>
+        )}
         <Link href="/admin">Admin</Link>
       </nav>
     </header>
+  );
+}
+
+function AuthForm({
+  login,
+  signup,
+  intro,
+}: {
+  login: (email: string, password: string) => void;
+  signup: (name: string, email: string, password: string) => void;
+  intro?: string;
+}) {
+  const [mode, setMode] = useState<"login" | "signup">("login");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+
+  function submit() {
+    if (mode === "login") {
+      login(email, password);
+    } else {
+      signup(name, email, password);
+    }
+  }
+
+  return (
+    <section className="section">
+      <h1>{mode === "login" ? "Se connecter" : "Creer un compte"}</h1>
+      {intro && <p>{intro}</p>}
+      <div className="steps">
+        <button className={mode === "login" ? "active" : ""} onClick={() => setMode("login")}>Se connecter</button>
+        <button className={mode === "signup" ? "active" : ""} onClick={() => setMode("signup")}>Creer un compte</button>
+      </div>
+      <div className="form-grid">
+        {mode === "signup" && <Input label="Nom" value={name} onChange={setName} />}
+        <Input label="Email" value={email} onChange={setEmail} />
+        <label>
+          <span>Mot de passe</span>
+          <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
+        </label>
+      </div>
+      <div className="actions">
+        <button className="button primary" onClick={submit}>
+          {mode === "login" ? "Se connecter" : "Creer mon compte"}
+        </button>
+      </div>
+    </section>
   );
 }
 
@@ -247,8 +377,6 @@ function OrderWizard(props: {
   setStep: (step: number) => void;
   form: RequestForm;
   setForm: (form: RequestForm) => void;
-  identity: { userName: string; userEmail: string };
-  setIdentity: (identity: { userName: string; userEmail: string }) => void;
   selectedOffer: string;
   selectedOccasion: string;
   setSelectedOffer: (id: string) => void;
@@ -266,7 +394,7 @@ function OrderWizard(props: {
         {props.step === 1 && <><Input label="Genre musical" value={props.form.genreMusical ?? ""} onChange={(value) => setField("genreMusical", value)} /><Input label="Ambiance" value={props.form.ambiance ?? ""} onChange={(value) => setField("ambiance", value)} /><Input label="Voix souhaitee" value={props.form.voixSouhaitee ?? ""} onChange={(value) => setField("voixSouhaitee", value)} /></>}
         {props.step === 2 && <><Textarea label="Anecdotes" value={props.form.anecdotes ?? ""} onChange={(value) => setField("anecdotes", value)} /><Textarea label="Paroles ou phrases a inclure" value={props.form.paroles ?? ""} onChange={(value) => setField("paroles", value)} /></>}
         {props.step === 3 && <><Input label="Reference YouTube / Spotify" value={props.form.reference ?? ""} onChange={(value) => setField("reference", value)} /><Input label="Fichier audio optionnel" value={props.form.fichierAudio ?? ""} onChange={(value) => setField("fichierAudio", value)} /></>}
-        {props.step === 4 && <><Input label="Duree souhaitee en secondes" value={String(props.form.dureeSouhaitee ?? 120)} onChange={(value) => setField("dureeSouhaitee", Number(value))} /><Input label="Deadline souhaitee" value={props.form.deadline ?? ""} onChange={(value) => setField("deadline", value)} /><Input label="Nom" value={props.identity.userName} onChange={(value) => props.setIdentity({ ...props.identity, userName: value })} /><Input label="Email" value={props.identity.userEmail} onChange={(value) => props.setIdentity({ ...props.identity, userEmail: value })} /></>}
+        {props.step === 4 && <><Input label="Duree souhaitee en secondes" value={String(props.form.dureeSouhaitee ?? 120)} onChange={(value) => setField("dureeSouhaitee", Number(value))} /><Input label="Deadline souhaitee" value={props.form.deadline ?? ""} onChange={(value) => setField("deadline", value)} /></>}
         {props.step === 5 && <><Select label="Offre" value={props.selectedOffer} onChange={props.setSelectedOffer} options={offers.map((item) => [item.id, `${item.name} - ${formatPrice(item.price)}`])} /><article className="summary"><h3>Recapitulatif</h3><p>{offer.name} • {formatPrice(offer.price)} • livraison {offer.deliveryDays} jours</p><p>{props.form.destinataire} • {props.form.genreMusical} • {props.form.ambiance}</p><button className="button primary" onClick={props.createOrder}>Creer la commande</button></article></>}
       </div>
       <div className="actions"><button className="button" onClick={() => props.setStep(Math.max(0, props.step - 1))}>Precedent</button><button className="button primary" onClick={() => props.setStep(Math.min(5, props.step + 1))}>Suivant</button></div>

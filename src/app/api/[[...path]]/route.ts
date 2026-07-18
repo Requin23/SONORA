@@ -6,12 +6,22 @@ import {
   createOrder,
   getOrder,
   listOrders,
+  listOrdersForUser,
   markCheckoutStarted,
   requestRevision,
   updateOrderForm,
   updateOrderStatus,
 } from "@/lib/store";
 import { verifyWebhookSecret } from "@/lib/yengapay";
+import {
+  clearSessionCookie,
+  createSessionToken,
+  createUser,
+  getSessionFromCookies,
+  setSessionCookie,
+  verifyUserCredentials,
+} from "@/lib/auth";
+import { isValidBasicAuth } from "@/lib/adminAuth";
 
 const json = (data: unknown, status = 200) => NextResponse.json(data, { status });
 
@@ -20,16 +30,48 @@ const pathOf = async (context: { params: Promise<{ path?: string[] }> }) => {
   return path;
 };
 
-export async function GET(_request: NextRequest, context: { params: Promise<{ path?: string[] }> }) {
+// Une commande est visible/modifiable soit par le client qui l'a passee
+// (session dont l'email correspond a la commande), soit par un admin
+// (identifiants Basic Auth valides, meme si la route n'est pas dans le
+// perimetre force par le middleware).
+async function isAuthorizedForOrder(request: NextRequest, orderUserEmail: string) {
+  const session = await getSessionFromCookies();
+  if (session && session.email === orderUserEmail) return true;
+  return isValidBasicAuth(request.headers.get("authorization"));
+}
+
+export async function GET(request: NextRequest, context: { params: Promise<{ path?: string[] }> }) {
   const path = await pathOf(context);
 
   if (path.join("/") === "offers") return json({ offers });
   if (path.join("/") === "occasions") return json({ occasions });
+
+  if (path.join("/") === "auth/me") {
+    const session = await getSessionFromCookies();
+    return json({
+      user: session ? { id: session.userId, email: session.email, name: session.name } : null,
+    });
+  }
+
+  if (path[0] === "admin" && path[1] === "orders") {
+    // Deja protege en amont par le middleware (Basic Auth sur /api/admin/*).
+    return json({ orders: await listOrders() });
+  }
+
   if (path[0] === "orders" && path[1]) {
     const order = await getOrder(path[1]);
-    return order ? json({ order }) : json({ error: "Commande introuvable" }, 404);
+    if (!order) return json({ error: "Commande introuvable" }, 404);
+    if (!(await isAuthorizedForOrder(request, order.userEmail))) {
+      return json({ error: "Non autorise" }, 403);
+    }
+    return json({ order });
   }
-  if (path[0] === "orders") return json({ orders: await listOrders() });
+
+  if (path[0] === "orders") {
+    const session = await getSessionFromCookies();
+    if (!session) return json({ error: "Connexion requise" }, 401);
+    return json({ orders: await listOrdersForUser(session.email) });
+  }
 
   return json({ error: "Route inconnue" }, 404);
 }
@@ -39,12 +81,63 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pa
     const path = await pathOf(context);
     const body = await request.json().catch(() => ({}));
 
+    if (path.join("/") === "auth/signup") {
+      const email = String(body.email ?? "").trim().toLowerCase();
+      const password = String(body.password ?? "");
+      const name = body.name ? String(body.name).trim() : undefined;
+
+      if (!email || !email.includes("@")) return json({ error: "Email invalide" }, 400);
+      if (password.length < 8) return json({ error: "Mot de passe trop court (8 caracteres minimum)" }, 400);
+
+      try {
+        const user = await createUser(email, password, name);
+        const token = await createSessionToken({ userId: user.id, email: user.email, name: user.name ?? undefined });
+        await setSessionCookie(token);
+        return json({ user: { id: user.id, email: user.email, name: user.name } }, 201);
+      } catch (error) {
+        if (error instanceof Error && error.message === "EMAIL_TAKEN") {
+          return json({ error: "Un compte existe deja avec cet email" }, 409);
+        }
+        throw error;
+      }
+    }
+
+    if (path.join("/") === "auth/login") {
+      const email = String(body.email ?? "").trim().toLowerCase();
+      const password = String(body.password ?? "");
+      const user = await verifyUserCredentials(email, password);
+      if (!user) return json({ error: "Email ou mot de passe incorrect" }, 401);
+      const token = await createSessionToken({ userId: user.id, email: user.email, name: user.name ?? undefined });
+      await setSessionCookie(token);
+      return json({ user: { id: user.id, email: user.email, name: user.name } });
+    }
+
+    if (path.join("/") === "auth/logout") {
+      await clearSessionCookie();
+      return json({ ok: true });
+    }
+
     if (path.join("/") === "orders") {
-      const order = await createOrder(body);
+      // L'email/nom vient de la session, jamais du corps de la requete : un
+      // client ne peut pas creer une commande au nom de quelqu'un d'autre.
+      const session = await getSessionFromCookies();
+      if (!session) return json({ error: "Connexion requise" }, 401);
+      const order = await createOrder({
+        offerId: body.offerId,
+        occasionId: body.occasionId,
+        userEmail: session.email,
+        userName: session.name,
+        requestForm: body.requestForm,
+      });
       return json({ order }, 201);
     }
 
     if (path[0] === "orders" && path[2] === "checkout") {
+      const existing = await getOrder(path[1]);
+      if (!existing) return json({ error: "Commande introuvable" }, 404);
+      if (!(await isAuthorizedForOrder(request, existing.userEmail))) {
+        return json({ error: "Non autorise" }, 403);
+      }
       return json(await markCheckoutStarted(path[1], body.paymentMethod, body.customerNumber));
     }
 
@@ -80,12 +173,18 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pa
     }
 
     if (path[0] === "orders" && path[2] === "deliverable") {
+      // Deja protege en amont par le middleware (Basic Auth admin).
       const order = await addDeliverable(path[1], body);
       console.info("Email client: livrable disponible", order.id);
       return json({ order });
     }
 
     if (path[0] === "orders" && path[2] === "revision") {
+      const existing = await getOrder(path[1]);
+      if (!existing) return json({ error: "Commande introuvable" }, 404);
+      if (!(await isAuthorizedForOrder(request, existing.userEmail))) {
+        return json({ error: "Non autorise" }, 403);
+      }
       return json({ order: await requestRevision(path[1], body.note) });
     }
 
@@ -108,10 +207,16 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ p
     const body = await request.json().catch(() => ({}));
 
     if (path[0] === "orders" && path[2] === "form") {
+      const existing = await getOrder(path[1]);
+      if (!existing) return json({ error: "Commande introuvable" }, 404);
+      if (!(await isAuthorizedForOrder(request, existing.userEmail))) {
+        return json({ error: "Non autorise" }, 403);
+      }
       return json({ order: await updateOrderForm(path[1], body) });
     }
 
     if (path[0] === "orders" && path[2] === "status") {
+      // Deja protege en amont par le middleware (Basic Auth admin).
       return json({ order: await updateOrderStatus(path[1], body.status as OrderStatus) });
     }
 

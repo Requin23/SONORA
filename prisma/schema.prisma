@@ -7,6 +7,17 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// Comptes clients (inscription / connexion par email + mot de passe). Les
+// commandes restent liees par userEmail (pas de relation stricte) pour ne
+// pas casser les commandes deja existantes creees avant l'ajout des comptes.
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String?
+  createdAt    DateTime @default(now())
+}
+
 // Schema volontairement simple pour ce MVP : les occasions et offres restent
 // des donnees statiques definies dans src/lib/sonora.ts (pas de table dediee).
 // requestForm et deliverables sont stockes en JSON pour coller a la structure
