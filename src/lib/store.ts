@@ -1,6 +1,6 @@
 import type { Order as PrismaOrder } from "@prisma/client";
 import { prisma } from "./prisma";
-import { addDays, formatPrice, getOccasion, getOffer, type Deliverable, type Order, type OrderStatus, type RequestForm } from "./sonora";
+import { EXPRESS_SURCHARGE, addDays, formatPrice, getOccasion, getOffer, type Deliverable, type Order, type OrderStatus, type RequestForm } from "./sonora";
 import { createPaymentIntent } from "./yengapay";
 import { notifyAdminsNewOrder, notifyClientDelivery } from "./email";
 
@@ -63,6 +63,8 @@ export async function createOrder(input: {
 }) {
   const offer = getOffer(input.offerId);
   if (!offer) throw new Error("Offre introuvable");
+  const requestForm = input.requestForm ?? {};
+  const finalPrice = offer.price + (requestForm.commandeExpress ? EXPRESS_SURCHARGE : 0);
 
   const row = await prisma.order.create({
     data: {
@@ -72,8 +74,8 @@ export async function createOrder(input: {
       offerId: offer.id,
       occasionId: input.occasionId,
       status: "EN_ATTENTE",
-      requestForm: (input.requestForm ?? {}) as object,
-      price: offer.price,
+      requestForm: requestForm as object,
+      price: finalPrice,
       deliverables: [],
       revisionsUsed: 0,
     },

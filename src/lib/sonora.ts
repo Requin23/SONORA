@@ -26,17 +26,21 @@ export type Occasion = {
 };
 
 export type RequestForm = {
+  whatsappClient?: string;
   destinataire?: string;
   occasionDetail?: string;
+  langueChanson?: string;
   genreMusical?: string;
   ambiance?: string;
   paroles?: string;
   anecdotes?: string;
   voixSouhaitee?: string;
+  typeVoix?: string;
   reference?: string;
   dureeSouhaitee?: number;
   deadline?: string;
   fichierAudio?: string;
+  commandeExpress?: boolean;
 };
 
 export type Deliverable = {
@@ -122,6 +126,8 @@ export const offers: Offer[] = [
     features: ["Échange avant création", "Versions affinées", "WAV haute qualité", "Usage commercial"],
   },
 ];
+
+export const EXPRESS_SURCHARGE = 100000;
 
 export const statusLabels: Record<OrderStatus, string> = {
   EN_ATTENTE: "En attente de paiement",
