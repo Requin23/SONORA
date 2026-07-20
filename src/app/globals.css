@@ -659,6 +659,27 @@ label.wide,
   grid-column: 1 / -1;
 }
 
+.checkbox-line {
+  align-items: center;
+  background: var(--panel-strong);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--foreground);
+  display: flex;
+  gap: 10px;
+  grid-column: 1 / -1;
+  padding: 14px;
+}
+
+.checkbox-line input {
+  min-height: auto;
+  width: auto;
+}
+
+.checkbox-line span {
+  color: var(--foreground);
+}
+
 input,
 select,
 textarea {
