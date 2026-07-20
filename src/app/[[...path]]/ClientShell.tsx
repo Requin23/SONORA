@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { formatPrice, getOccasion, getOffer, occasions, offers, statusLabels, type Order, type RequestForm } from "@/lib/sonora";
+import { EXPRESS_SURCHARGE, formatPrice, getOccasion, getOffer, occasions, offers, statusLabels, type Order, type RequestForm } from "@/lib/sonora";
 
 type Props = {
   path: string[];
@@ -35,16 +35,20 @@ export default function ClientShell({ path }: Props) {
   const [selectedOccasion, setSelectedOccasion] = useState("occ-anniversaire");
   const [step, setStep] = useState(0);
   const [form, setForm] = useState<RequestForm>({
+    whatsappClient: "",
     destinataire: "",
     occasionDetail: "",
+    langueChanson: "Français",
     genreMusical: "Afro pop",
     ambiance: "joyeuse et emouvante",
     paroles: "",
     anecdotes: "",
     voixSouhaitee: "voix chaleureuse",
+    typeVoix: "Femme",
     reference: "",
     dureeSouhaitee: 120,
     deadline: "",
+    commandeExpress: false,
   });
   const [message, setMessage] = useState("");
   const [activeOrderId, setActiveOrderId] = useState(path[1] ?? "");
@@ -143,8 +147,8 @@ export default function ClientShell({ path }: Props) {
       router.push("/connexion");
       return;
     }
-    if (!form.destinataire || !form.genreMusical) {
-      setMessage("Renseigne au minimum le destinataire et le style musical.");
+    if (!form.destinataire || !form.whatsappClient || !form.genreMusical) {
+      setMessage("Renseigne au minimum le destinataire, le WhatsApp client et le style musical.");
       return;
     }
     const response = await fetch("/api/orders", {
@@ -420,7 +424,7 @@ function Home() {
           <h2>Écoutez l’ambiance Sonora.</h2>
           <p>Un extrait court pour montrer le ton chaleureux, premium et émotionnel que les clients peuvent attendre.</p>
         </div>
-        <audio controls preload="metadata" src="/bienvenue-sonora.mp3">
+        <audio controls preload="metadata" src="/sonora-ensemble.mp3">
           Votre navigateur ne prend pas en charge la lecture audio.
         </audio>
       </section>
@@ -430,7 +434,7 @@ function Home() {
             <p className="eyebrow">Offres populaires</p>
             <h2>Des formats simples pour vendre vite.</h2>
           </div>
-          <p>Trois niveaux suffisent pour couvrir le cadeau personnel, la commande urgente et l'usage commercial.</p>
+          <p>Deux offres simples suffisent pour couvrir le cadeau personnel, la commande urgente et l'usage commercial.</p>
         </div>
         <div className="grid three">
           {offers.map((offer) => (
@@ -499,9 +503,9 @@ function Examples() {
         <p>Des formats de démonstration pour aider le client à se projeter avant de remplir son brief.</p>
       </div>
       <div className="grid three">
-        <AudioExample title="Anniversaire" body="Une chanson tendre pour célébrer une personne, ses souvenirs et son année." />
-        <AudioExample title="Mariage" body="Une ambiance douce et émotionnelle pour une entrée, une vidéo ou une surprise." />
-        <AudioExample title="Entreprise" body="Un jingle moderne pour une marque, une campagne ou une équipe." />
+        <AudioExample title="Anniversaire" body="Une chanson tendre pour célébrer une personne, ses souvenirs et son année." src="/aujourdhui-pour-toi.mp3" />
+        <AudioExample title="Mariage" body="Une ambiance douce et émotionnelle pour une entrée, une vidéo ou une surprise." src="/deux-chemins.mp3" />
+        <AudioExample title="Entreprise" body="Un jingle moderne pour une marque, une campagne ou une équipe." src="/sonora-ensemble.mp3" />
       </div>
       <div className="actions">
         <Link className="button primary" href="/commande/nouvelle">Créer ma chanson</Link>
@@ -510,12 +514,12 @@ function Examples() {
   );
 }
 
-function AudioExample({ title, body }: { title: string; body: string }) {
+function AudioExample({ title, body, src }: { title: string; body: string; src: string }) {
   return (
     <article className="audio-card">
       <h3>{title}</h3>
       <p>{body}</p>
-      <audio controls preload="metadata" src="/bienvenue-sonora.mp3">
+      <audio controls preload="metadata" src={src}>
         Votre navigateur ne prend pas en charge la lecture audio.
       </audio>
     </article>
@@ -570,9 +574,11 @@ function OrderWizard(props: {
 }) {
   const offer = getOffer(props.selectedOffer) ?? offers[0];
   const [wizardMessage, setWizardMessage] = useState("");
-  const setField = (key: keyof RequestForm, value: string | number) => props.setForm({ ...props.form, [key]: value });
+  const setField = (key: keyof RequestForm, value: string | number | boolean) => props.setForm({ ...props.form, [key]: value });
+  const expressPrice = offer.price + (props.form.commandeExpress ? EXPRESS_SURCHARGE : 0);
   function validateStep() {
     if (props.step === 0 && !props.form.destinataire?.trim()) return "Indiquez le destinataire de la chanson.";
+    if (props.step === 0 && !props.form.whatsappClient?.trim()) return "Indiquez le numéro WhatsApp du client.";
     if (props.step === 1 && !props.form.genreMusical?.trim()) return "Indiquez au moins un style musical.";
     if (props.step === 2 && !props.form.anecdotes?.trim() && !props.form.paroles?.trim()) {
       return "Ajoutez au moins une anecdote, un souvenir ou une phrase à inclure.";
@@ -616,12 +622,12 @@ function OrderWizard(props: {
       </article>
       {wizardMessage ? <div className="form-alert">{wizardMessage}</div> : null}
       <div className="form-grid">
-        {props.step === 0 && <><Select label="Occasion" value={props.selectedOccasion} onChange={props.setSelectedOccasion} options={occasions.map((item) => [item.id, item.name])} /><Input label="Destinataire" value={props.form.destinataire ?? ""} onChange={(value) => setField("destinataire", value)} /><Input label="Détail de l'occasion" value={props.form.occasionDetail ?? ""} onChange={(value) => setField("occasionDetail", value)} /></>}
-        {props.step === 1 && <><Input label="Genre musical" value={props.form.genreMusical ?? ""} onChange={(value) => setField("genreMusical", value)} /><Input label="Ambiance" value={props.form.ambiance ?? ""} onChange={(value) => setField("ambiance", value)} /><Input label="Voix souhaitée" value={props.form.voixSouhaitee ?? ""} onChange={(value) => setField("voixSouhaitee", value)} /></>}
+        {props.step === 0 && <><Select label="Occasion" value={props.selectedOccasion} onChange={props.setSelectedOccasion} options={occasions.map((item) => [item.id, item.name])} /><Input label="Destinataire" value={props.form.destinataire ?? ""} onChange={(value) => setField("destinataire", value)} /><Input label="WhatsApp du client" value={props.form.whatsappClient ?? ""} onChange={(value) => setField("whatsappClient", value)} /><Input label="Détail de l'occasion" value={props.form.occasionDetail ?? ""} onChange={(value) => setField("occasionDetail", value)} /></>}
+        {props.step === 1 && <><Input label="Genre musical" value={props.form.genreMusical ?? ""} onChange={(value) => setField("genreMusical", value)} /><Select label="Langue de la chanson" value={props.form.langueChanson ?? "Français"} onChange={(value) => setField("langueChanson", value)} options={[["Français", "Français"], ["Mooré", "Mooré"], ["Dioula", "Dioula"], ["Anglais", "Anglais"], ["Autre", "Autre"]]} /><Input label="Ambiance" value={props.form.ambiance ?? ""} onChange={(value) => setField("ambiance", value)} /><Select label="Type de voix" value={props.form.typeVoix ?? "Femme"} onChange={(value) => setField("typeVoix", value)} options={[["Femme", "Femme"], ["Homme", "Homme"], ["Duo", "Duo"], ["Chœurs", "Chœurs"], ["Rap", "Rap"]]} /><Input label="Voix souhaitée" value={props.form.voixSouhaitee ?? ""} onChange={(value) => setField("voixSouhaitee", value)} /></>}
         {props.step === 2 && <><Textarea label="Anecdotes et souvenirs" value={props.form.anecdotes ?? ""} onChange={(value) => setField("anecdotes", value)} /><Textarea label="Paroles ou phrases à inclure" value={props.form.paroles ?? ""} onChange={(value) => setField("paroles", value)} /></>}
         {props.step === 3 && <><Input label="Référence YouTube / Spotify" value={props.form.reference ?? ""} onChange={(value) => setField("reference", value)} /><Input label="Fichier audio optionnel" value={props.form.fichierAudio ?? ""} onChange={(value) => setField("fichierAudio", value)} /></>}
-        {props.step === 4 && <><Input label="Durée souhaitée en secondes" value={String(props.form.dureeSouhaitee ?? 120)} onChange={(value) => setField("dureeSouhaitee", Number(value))} /><Input label="Date limite souhaitée" value={props.form.deadline ?? ""} onChange={(value) => setField("deadline", value)} /></>}
-        {props.step === 5 && <><Select label="Offre" value={props.selectedOffer} onChange={props.setSelectedOffer} options={offers.map((item) => [item.id, `${item.name} - ${formatPrice(item.price)}`])} /><article className="summary"><h3>Récapitulatif</h3><p>{offer.name} • {formatPrice(offer.price)} • livraison {offer.deliveryDays} jours • {offer.revisions} révisions</p><p>{props.form.destinataire || "Destinataire à préciser"} • {props.form.genreMusical} • {props.form.ambiance}</p><ul><li>Votre brief est lié à votre compte client.</li><li>Le paiement démarre après création de la commande.</li><li>La livraison sera disponible dans votre espace.</li></ul><button className="button primary" onClick={props.createOrder}>Créer la commande</button></article></>}
+        {props.step === 4 && <><Input label="Durée souhaitée en secondes" value={String(props.form.dureeSouhaitee ?? 120)} onChange={(value) => setField("dureeSouhaitee", Number(value))} /><Input label="Date limite souhaitée" value={props.form.deadline ?? ""} onChange={(value) => setField("deadline", value)} /><label className="checkbox-line"><input type="checkbox" checked={Boolean(props.form.commandeExpress)} onChange={(event) => setField("commandeExpress", event.target.checked)} /><span>Commande express (+{formatPrice(EXPRESS_SURCHARGE)})</span></label></>}
+        {props.step === 5 && <><Select label="Offre" value={props.selectedOffer} onChange={props.setSelectedOffer} options={offers.map((item) => [item.id, `${item.name} - ${formatPrice(item.price)}`])} /><article className="summary"><h3>Récapitulatif</h3><p>{offer.name} • {formatPrice(expressPrice)} • livraison {offer.deliveryDays} jours • {offer.revisions} révisions</p><p>{props.form.destinataire || "Destinataire à préciser"} • {props.form.genreMusical} • {props.form.langueChanson} • voix {props.form.typeVoix}</p><ul><li>WhatsApp client : {props.form.whatsappClient || "non renseigné"}</li><li>{props.form.commandeExpress ? `Commande express incluse (+${formatPrice(EXPRESS_SURCHARGE)})` : "Commande standard sans supplément express"}</li><li>Le paiement démarre après création de la commande.</li><li>La livraison sera disponible dans votre espace.</li></ul><button className="button primary" onClick={props.createOrder}>Créer la commande</button></article></>}
       </div>
       <div className="actions"><button className="button" onClick={goPrevious}>Précédent</button><button className="button primary" onClick={goNext}>Suivant</button></div>
     </section>
@@ -737,10 +743,14 @@ function OrderDetail({ order, requestRevision }: { order: Order; requestRevision
 
         <div className="brief-grid">
           <BriefItem label="Destinataire" value={form.destinataire} />
+          <BriefItem label="WhatsApp" value={form.whatsappClient} />
           <BriefItem label="Occasion" value={form.occasionDetail} />
           <BriefItem label="Genre musical" value={form.genreMusical} />
+          <BriefItem label="Langue" value={form.langueChanson} />
+          <BriefItem label="Type de voix" value={form.typeVoix} />
           <BriefItem label="Ambiance" value={form.ambiance} />
           <BriefItem label="Voix souhaitée" value={form.voixSouhaitee} />
+          <BriefItem label="Commande express" value={form.commandeExpress ? "Oui" : "Non"} />
           <BriefItem label="Durée" value={form.dureeSouhaitee ? `${form.dureeSouhaitee} secondes` : undefined} />
           <BriefItem wide label="Anecdotes" value={form.anecdotes} />
           <BriefItem wide label="Paroles ou phrases à inclure" value={form.paroles} />
@@ -867,9 +877,13 @@ function AdminOrderRow({
       </div>
 
       <div className="brief-grid compact">
+        <BriefItem label="WhatsApp" value={form.whatsappClient} />
         <BriefItem label="Style" value={form.genreMusical} />
+        <BriefItem label="Langue" value={form.langueChanson} />
+        <BriefItem label="Type de voix" value={form.typeVoix} />
         <BriefItem label="Ambiance" value={form.ambiance} />
         <BriefItem label="Deadline" value={order.deadline ? new Date(order.deadline).toLocaleDateString("fr-FR") : "Après paiement"} />
+        <BriefItem label="Express" value={form.commandeExpress ? "Oui" : "Non"} />
         <BriefItem label="Voix" value={form.voixSouhaitee} />
         <BriefItem wide label="Anecdotes" value={form.anecdotes} />
         <BriefItem wide label="Phrases à inclure" value={form.paroles} />
