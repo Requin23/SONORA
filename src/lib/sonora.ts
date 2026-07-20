@@ -103,42 +103,33 @@ export const occasions: Occasion[] = [
 
 export const offers: Offer[] = [
   {
-    id: "offer-essentiel",
-    name: "Essentiel",
-    slug: "essentiel",
-    price: 300000,
-    deliveryDays: 7,
-    revisions: 1,
-    features: ["1 piste retenue", "MP3", "Usage personnel", "1 revision"],
-  },
-  {
     id: "offer-standard",
     name: "Standard",
     slug: "standard",
-    price: 600000,
+    price: 200000,
     deliveryDays: 4,
     revisions: 2,
     highlight: true,
-    features: ["Plusieurs generations testees", "MP3 + WAV", "Meilleure prise selectionnee", "2 revisions"],
+    features: ["Plusieurs générations testées", "MP3 + WAV", "Meilleure prise sélectionnée", "2 révisions"],
   },
   {
     id: "offer-premium",
     name: "Premium",
     slug: "premium",
-    price: 1200000,
+    price: 500000,
     deliveryDays: 2,
     revisions: 3,
-    features: ["Echange avant creation", "Versions affinees", "WAV haute qualite", "Usage commercial"],
+    features: ["Échange avant création", "Versions affinées", "WAV haute qualité", "Usage commercial"],
   },
 ];
 
 export const statusLabels: Record<OrderStatus, string> = {
   EN_ATTENTE: "En attente de paiement",
-  PAYEE: "Payee, a traiter",
+  PAYEE: "Payée, à traiter",
   EN_PRODUCTION: "En production",
-  EN_REVISION: "En revision",
-  LIVREE: "Livree",
-  ANNULEE: "Annulee",
+  EN_REVISION: "En révision",
+  LIVREE: "Livrée",
+  ANNULEE: "Annulée",
 };
 
 export const formatPrice = (price: number) =>
