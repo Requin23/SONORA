@@ -40,9 +40,8 @@ http://127.0.0.1:3000
   - details pratiques ;
   - recapitulatif.
 - Creation des offres :
-  - Essentiel : 3 000 FCFA ;
-  - Standard : 6 000 FCFA ;
-  - Premium : 12 000 FCFA.
+  - Standard : 2 000 FCFA ;
+  - Premium : 5 000 FCFA.
 - Creation des occasions :
   - anniversaire ;
   - mariage ;
