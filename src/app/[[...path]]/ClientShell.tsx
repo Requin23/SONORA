@@ -112,7 +112,7 @@ export default function ClientShell({ path }: Props) {
     }
     setAuthUser(data.user);
     setMessage(`Bienvenue ${data.user.name ?? data.user.email} !`);
-    router.push("/compte");
+    router.push("/");
   }
 
   async function signup(name: string, email: string, password: string) {
@@ -129,7 +129,7 @@ export default function ClientShell({ path }: Props) {
     }
     setAuthUser(data.user);
     setMessage(`Compte créé, bienvenue ${data.user.name ?? data.user.email} !`);
-    router.push("/compte");
+    router.push("/");
   }
 
   async function logout() {
