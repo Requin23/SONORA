@@ -721,6 +721,24 @@ textarea {
   color: #991b1b;
 }
 
+.badge.verification {
+  background: #fef3c7;
+  border-color: #f59e0b;
+  color: #92400e;
+}
+
+.badge.paid {
+  background: #dcfce7;
+  border-color: #86efac;
+  color: #166534;
+}
+
+.badge.cancelled {
+  background: #f3f4f6;
+  border-color: #d1d5db;
+  color: #4b5563;
+}
+
 .order-card {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -737,7 +755,7 @@ textarea {
 .timeline {
   display: grid;
   gap: 10px;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   margin-top: 18px;
 }
 
@@ -816,6 +834,24 @@ textarea {
 
 .brief-item.wide {
   grid-column: 1 / -1;
+}
+
+.payment-card {
+  max-width: 860px;
+}
+
+.payment-confirm {
+  align-items: center;
+  background: #fef3c7;
+  border: 1px solid #f59e0b;
+  border-radius: 8px;
+  color: #78350f;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: space-between;
+  margin-top: 14px;
+  padding: 14px;
 }
 
 .table {
