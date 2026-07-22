@@ -20,7 +20,7 @@ const stepHelp = [
   "Relisez votre brief, choisissez l'offre, puis confirmez la commande avant le paiement.",
 ];
 
-const statusFlow = ["PAYEE", "EN_PRODUCTION", "EN_REVISION", "LIVREE", "ANNULEE"] as const;
+const statusFlow = ["EN_VERIFICATION", "PAYEE", "EN_PRODUCTION", "EN_REVISION", "LIVREE", "ANNULEE"] as const;
 const adminStatusOptions = ["EN_ATTENTE", ...statusFlow] as const;
 
 type AuthUser = { id: string; email: string; name?: string };
@@ -55,6 +55,7 @@ export default function ClientShell({ path }: Props) {
   const whatsappUrl =
     process.env.NEXT_PUBLIC_WHATSAPP_URL ??
     "https://wa.me/22671062285?text=Bonjour%20Sonora%2C%20je%20veux%20commander%20une%20chanson%20personnalis%C3%A9e.";
+  const manualPaymentNumber = process.env.NEXT_PUBLIC_MANUAL_PAYMENT_NUMBER ?? "+22606387575";
 
   useEffect(() => {
     void bootstrap();
@@ -185,6 +186,30 @@ export default function ClientShell({ path }: Props) {
     window.location.href = data.paymentUrl;
   }
 
+  async function submitManualPayment(orderId: string, transactionReference: string) {
+    const reference = transactionReference.trim();
+    if (!reference) {
+      setMessage("Ajoute la référence de transaction avant de valider.");
+      return;
+    }
+
+    const response = await fetch(`/api/orders/${orderId}/status`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "EN_VERIFICATION", transactionReference: reference }),
+    });
+    const data = (await response.json()) as { order?: Order; error?: string };
+    if (!response.ok || !data.order) {
+      setMessage(data.error ?? "Impossible d'envoyer la référence de paiement.");
+      return;
+    }
+
+    setActiveOrderId(data.order.id);
+    await refreshOrders("/api/orders");
+    setMessage("Référence reçue. Sonora va vérifier le paiement avant de lancer la production.");
+    router.push(`/commande/${data.order.id}/suivi`);
+  }
+
   // Outil de développement uniquement : simule le webhook YengaPay pour
   // tester le flux sans effectuer un vrai paiement mobile money. A retirer
   // (ou a proteger) avant mise en production.
@@ -262,7 +287,7 @@ export default function ClientShell({ path }: Props) {
         />
       )}
       {path[0] === "commande" && path[2] === "paiement" && activeOrder && (
-        <Payment order={activeOrder} checkout={checkout} simulatePaymentWebhook={simulatePaymentWebhook} />
+        <Payment order={activeOrder} manualPaymentNumber={manualPaymentNumber} submitManualPayment={submitManualPayment} />
       )}
       {path[0] === "commande" && path[2] === "suivi" && activeOrder && <Tracking order={activeOrder} />}
       {route === "/premium" && <Premium />}
@@ -414,7 +439,7 @@ function Home() {
         </div>
         <div className="process-list">
           <ProcessStep index="01" title="Racontez" body="Le client decrit la personne, l'ambiance, les souvenirs et les phrases importantes." />
-          <ProcessStep index="02" title="Payez" body="Le checkout YengaPay regroupe Mobile Money et carte pour confirmer la commande." />
+          <ProcessStep index="02" title="Payez" body="Le client paie par Mobile Money, puis envoie sa référence pour vérification." />
           <ProcessStep index="03" title="Suivez" body="Le compte client affiche le statut, les révisions et les fichiers audio livrés." />
         </div>
       </section>
@@ -634,25 +659,65 @@ function OrderWizard(props: {
   );
 }
 
-function Payment({ order, checkout, simulatePaymentWebhook }: { order: Order; checkout: (id: string) => void; simulatePaymentWebhook: (id: string) => void }) {
-  const devTools = process.env.NEXT_PUBLIC_ENABLE_DEV_TOOLS === "true";
+function Payment({
+  order,
+  manualPaymentNumber,
+  submitManualPayment,
+}: {
+  order: Order;
+  manualPaymentNumber: string;
+  submitManualPayment: (id: string, transactionReference: string) => void;
+}) {
+  const [transactionReference, setTransactionReference] = useState(order.requestForm.transactionReference ?? "");
   return (
     <section className="section">
-      <h1>Paiement</h1>
-      <p>Commande {order.id} - {formatPrice(order.price)}</p>
-      <p>Canaux: Orange Money, Moov Money, Sank Money, Coris Money et carte bancaire via YengaPay.</p>
-      <div className="actions">
-        <button className="button primary" onClick={() => checkout(order.id)}>Payer avec YengaPay</button>
-        {devTools && (
-          <button className="button" onClick={() => simulatePaymentWebhook(order.id)}>Simuler webhook payé (dev)</button>
-        )}
+      <div className="section-heading">
+        <div>
+          <p className="eyebrow">Paiement Mobile Money</p>
+          <h1>Finaliser la commande</h1>
+        </div>
+        <p>Envoyez le montant exact, puis collez la référence de transaction pour que Sonora vérifie le paiement.</p>
       </div>
+
+      <article className="order-card payment-card">
+        <div className="order-card-header">
+          <div>
+            <span>Commande</span>
+            <strong>{order.id}</strong>
+          </div>
+          <div>
+            <span>Montant à payer</span>
+            <strong>{formatPrice(order.price)}</strong>
+          </div>
+          <div>
+            <span>Numéro Mobile Money</span>
+            <strong>{manualPaymentNumber}</strong>
+          </div>
+        </div>
+
+        {order.status === "EN_VERIFICATION" ? (
+          <div className="form-alert">
+            Référence envoyée : {order.requestForm.transactionReference}. Le paiement est en vérification.
+          </div>
+        ) : (
+          <div className="form-grid">
+            <Input label="Référence de transaction" value={transactionReference} onChange={setTransactionReference} />
+            <article className="summary">
+              <h3>Après le transfert</h3>
+              <p>Vérifiez bien que le montant envoyé correspond à {formatPrice(order.price)}.</p>
+              <button className="button primary" onClick={() => submitManualPayment(order.id, transactionReference)}>
+                J&apos;ai payé
+              </button>
+            </article>
+          </div>
+        )}
+      </article>
     </section>
   );
 }
 
 function Tracking({ order }: { order: Order }) {
-  return <section className="section"><h1>Suivi</h1><p className="badge">{statusLabels[order.status]}</p><p>Deadline : {order.deadline ? new Date(order.deadline).toLocaleDateString("fr-FR") : "après paiement"}</p></section>;
+  return <section className="section"><h1>Suivi</h1><p className={statusBadgeClass(order.status)}>{statusLabels[order.status]}</p><p>Deadline : {order.deadline ? new Date(order.deadline).toLocaleDateString("fr-FR") : "après paiement"}</p></section>;
 }
 
 function Premium() {
@@ -679,6 +744,7 @@ function ClientDashboard({ orders, setActiveOrderId }: { orders: Order[]; setAct
 function OrderTimeline({ order }: { order: Order }) {
   const timeline = [
     { status: "EN_ATTENTE", label: "Commande créée" },
+    { status: "EN_VERIFICATION", label: "Paiement à vérifier" },
     { status: "PAYEE", label: "Paiement confirmé" },
     { status: "EN_PRODUCTION", label: "En production" },
     { status: "EN_REVISION", label: "Révision" },
@@ -690,7 +756,7 @@ function OrderTimeline({ order }: { order: Order }) {
   return (
     <article className="timeline-card">
       <div>
-        <span className="badge">{statusLabels[order.status]}</span>
+        <span className={statusBadgeClass(order.status)}>{statusLabels[order.status]}</span>
         <h3>Dernière commande : {order.id}</h3>
         <p>{formatPrice(order.price)} • {order.deadline ? new Date(order.deadline).toLocaleDateString("fr-FR") : "deadline après paiement"}</p>
       </div>
@@ -722,7 +788,7 @@ function OrderDetail({ order, requestRevision }: { order: Order; requestRevision
           <p className="eyebrow">Espace client</p>
           <h1>Commande {order.id}</h1>
         </div>
-        <p className="badge">{statusLabels[order.status]}</p>
+        <p className={statusBadgeClass(order.status)}>{statusLabels[order.status]}</p>
       </div>
 
       <div className="order-card">
@@ -751,6 +817,7 @@ function OrderDetail({ order, requestRevision }: { order: Order; requestRevision
           <BriefItem label="Ambiance" value={form.ambiance} />
           <BriefItem label="Voix souhaitée" value={form.voixSouhaitee} />
           <BriefItem label="Commande express" value={form.commandeExpress ? "Oui" : "Non"} />
+          <BriefItem label="Référence transaction" value={form.transactionReference} />
           <BriefItem label="Durée" value={form.dureeSouhaitee ? `${form.dureeSouhaitee} secondes` : undefined} />
           <BriefItem wide label="Anecdotes" value={form.anecdotes} />
           <BriefItem wide label="Paroles ou phrases à inclure" value={form.paroles} />
@@ -860,7 +927,7 @@ function AdminOrderRow({
     <article className="admin-row">
       <div className="admin-row-head">
         <div>
-          <span className={urgent ? "badge urgent" : "badge"}>{urgent ? "Urgent" : statusLabels[order.status]}</span>
+          <span className={urgent ? "badge urgent" : statusBadgeClass(order.status)}>{urgent ? "Urgent" : statusLabels[order.status]}</span>
           <h3>{form.destinataire || "Destinataire non renseigné"}</h3>
           <p>{offer?.name ?? order.offerId} • {formatPrice(order.price)} • {order.userEmail}</p>
         </div>
@@ -877,6 +944,7 @@ function AdminOrderRow({
       </div>
 
       <div className="brief-grid compact">
+        <BriefItem label="Référence transaction" value={form.transactionReference} />
         <BriefItem label="WhatsApp" value={form.whatsappClient} />
         <BriefItem label="Style" value={form.genreMusical} />
         <BriefItem label="Langue" value={form.langueChanson} />
@@ -889,6 +957,15 @@ function AdminOrderRow({
         <BriefItem wide label="Phrases à inclure" value={form.paroles} />
         <BriefItem wide label="Référence" value={form.reference} />
       </div>
+
+      {order.status === "EN_VERIFICATION" && (
+        <div className="payment-confirm">
+          <strong>Référence de transaction : {form.transactionReference || "Non renseignée"}</strong>
+          <button className="button primary" onClick={() => updateStatus(order.id, "PAYEE")}>
+            Confirmer paiement reçu
+          </button>
+        </div>
+      )}
 
       {order.deliverables.length > 0 && (
         <div className="deliverables-list">
@@ -937,9 +1014,16 @@ function urgencyScore(order: Order) {
   return Math.max(2, 20 - remainingDays);
 }
 
+function statusBadgeClass(status: Order["status"]) {
+  if (status === "EN_VERIFICATION") return "badge verification";
+  if (status === "PAYEE") return "badge paid";
+  if (status === "ANNULEE") return "badge cancelled";
+  return "badge";
+}
+
 function OrderTable({ orders, setActiveOrderId, base }: { orders: Order[]; setActiveOrderId: (id: string) => void; base: string }) {
   if (!orders.length) return <p>Aucune commande pour l'instant. Créez-en une depuis le formulaire.</p>;
-  return <div className="table">{orders.map((order) => <Link href={`${base}/${order.id}`} onClick={() => setActiveOrderId(order.id)} className="table-row" key={order.id}><span>{order.id}</span><span>{statusLabels[order.status]}</span><span>{formatPrice(order.price)}</span><span>{order.deadline ? new Date(order.deadline).toLocaleDateString("fr-FR") : "-"}</span></Link>)}</div>;
+  return <div className="table">{orders.map((order) => <Link href={`${base}/${order.id}`} onClick={() => setActiveOrderId(order.id)} className="table-row" key={order.id}><span>{order.id}</span><span className={statusBadgeClass(order.status)}>{statusLabels[order.status]}</span><span>{formatPrice(order.price)}</span><span>{order.deadline ? new Date(order.deadline).toLocaleDateString("fr-FR") : "-"}</span></Link>)}</div>;
 }
 
 function Section({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) {
