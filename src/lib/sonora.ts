@@ -1,5 +1,6 @@
 export type OrderStatus =
   | "EN_ATTENTE"
+  | "EN_VERIFICATION"
   | "PAYEE"
   | "EN_PRODUCTION"
   | "EN_REVISION"
@@ -41,6 +42,7 @@ export type RequestForm = {
   deadline?: string;
   fichierAudio?: string;
   commandeExpress?: boolean;
+  transactionReference?: string;
 };
 
 export type Deliverable = {
@@ -131,6 +133,7 @@ export const EXPRESS_SURCHARGE = 100000;
 
 export const statusLabels: Record<OrderStatus, string> = {
   EN_ATTENTE: "En attente de paiement",
+  EN_VERIFICATION: "Paiement à vérifier",
   PAYEE: "Payée, à traiter",
   EN_PRODUCTION: "En production",
   EN_REVISION: "En révision",
