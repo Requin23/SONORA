@@ -179,9 +179,29 @@ export async function confirmPayment(id: string, transactionId?: string, payment
   return toOrder(row);
 }
 
-export async function updateOrderStatus(id: string, status: OrderStatus) {
-  const row = await prisma.order.update({ where: { id }, data: { status } }).catch(() => null);
-  if (!row) throw new Error("Commande introuvable");
+export async function updateOrderStatus(id: string, status: OrderStatus, requestFormPatch?: Partial<RequestForm>) {
+  const existing = await prisma.order.findUnique({ where: { id } });
+  if (!existing) throw new Error("Commande introuvable");
+
+  const form = (existing.requestForm as RequestForm | null) ?? {};
+  const offer = getOffer(existing.offerId);
+  const data: {
+    status: OrderStatus;
+    requestForm?: object;
+    deadline?: string;
+    paymentMethod?: string;
+  } = { status };
+
+  if (requestFormPatch) {
+    data.requestForm = { ...form, ...requestFormPatch };
+  }
+
+  if (status === "PAYEE" && existing.status !== "PAYEE") {
+    data.deadline = addDays(new Date(), offer?.deliveryDays ?? 7);
+    data.paymentMethod = existing.paymentMethod ?? "manual_mobile_money";
+  }
+
+  const row = await prisma.order.update({ where: { id }, data });
   return toOrder(row);
 }
 
