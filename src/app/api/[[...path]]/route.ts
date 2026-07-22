@@ -216,8 +216,40 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ p
     }
 
     if (path[0] === "orders" && path[2] === "status") {
-      // Deja protege en amont par le middleware (Basic Auth admin).
-      return json({ order: await updateOrderStatus(path[1], body.status as OrderStatus) });
+      const existing = await getOrder(path[1]);
+      if (!existing) return json({ error: "Commande introuvable" }, 404);
+
+      const nextStatus = body.status as OrderStatus;
+      const isAdmin = isValidBasicAuth(request.headers.get("authorization"));
+
+      if (nextStatus === "EN_VERIFICATION") {
+        const session = await getSessionFromCookies();
+        if (!session || session.email !== existing.userEmail) {
+          return json({ error: "Non autorise" }, 403);
+        }
+        if (existing.status !== "EN_ATTENTE") {
+          return json({ error: "Cette commande n'attend plus de paiement" }, 400);
+        }
+
+        const transactionReference = String(body.transactionReference ?? "").trim();
+        if (!transactionReference) {
+          return json({ error: "Reference de transaction requise" }, 400);
+        }
+
+        return json({
+          order: await updateOrderStatus(path[1], "EN_VERIFICATION", { transactionReference }),
+        });
+      }
+
+      if (!isAdmin) {
+        return json({ error: "Action reservee a l'admin" }, 403);
+      }
+
+      if (nextStatus === "PAYEE" && existing.status !== "EN_VERIFICATION") {
+        return json({ error: "Le paiement doit d'abord etre en verification" }, 400);
+      }
+
+      return json({ order: await updateOrderStatus(path[1], nextStatus) });
     }
 
     return json({ error: "Route inconnue" }, 404);
