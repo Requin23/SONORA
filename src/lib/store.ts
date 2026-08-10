@@ -2,7 +2,7 @@ import type { Order as PrismaOrder } from "@prisma/client";
 import { prisma } from "./prisma";
 import { EXPRESS_SURCHARGE, addDays, formatPrice, getOccasion, getOffer, type Deliverable, type Order, type OrderStatus, type RequestForm } from "./sonora";
 import { createPaymentIntent } from "./yengapay";
-import { notifyAdminsNewOrder, notifyClientDelivery } from "./email";
+import { notifyAdminsNewOrder, notifyAdminsPaymentVerification, notifyClientDelivery, notifyClientOrderCreated, notifyClientPaymentConfirmed } from "./email";
 
 const publicId = (prefix: string) => `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 
@@ -83,19 +83,19 @@ export async function createOrder(input: {
 
   const order = toOrder(row);
 
-  // Notification email aux admins : ne doit jamais faire echouer la creation
-  // de commande si l'envoi rate (config manquante, API down...).
-  void notifyAdminsNewOrder(
-    {
-      id: order.id,
-      userEmail: order.userEmail,
-      userName: order.userName,
-      offerName: offer.name,
-      price: order.price,
-      occasionName: getOccasion(input.occasionId)?.name,
-    },
-    formatPrice,
-  ).catch((error) => console.error("Notification admin echouee:", error));
+  const emailPayload = {
+    id: order.id,
+    userEmail: order.userEmail,
+    userName: order.userName,
+    offerName: offer.name,
+    price: order.price,
+    occasionName: getOccasion(input.occasionId)?.name,
+  };
+
+  // Les notifications ne doivent jamais faire echouer la creation de commande
+  // si l'email est mal configure ou temporairement indisponible.
+  void notifyAdminsNewOrder(emailPayload, formatPrice).catch((error) => console.error("Notification admin echouee:", error));
+  void notifyClientOrderCreated(emailPayload, formatPrice).catch((error) => console.error("Notification client commande echouee:", error));
 
   return order;
 }
@@ -202,7 +202,33 @@ export async function updateOrderStatus(id: string, status: OrderStatus, request
   }
 
   const row = await prisma.order.update({ where: { id }, data });
-  return toOrder(row);
+  const order = toOrder(row);
+
+  const emailPayload = {
+    id: order.id,
+    userEmail: order.userEmail,
+    userName: order.userName,
+    offerName: offer?.name ?? order.offerId,
+    price: order.price,
+    occasionName: getOccasion(order.occasionId)?.name,
+  };
+
+  if (status === "EN_VERIFICATION" && requestFormPatch?.transactionReference) {
+    void notifyAdminsPaymentVerification(
+      {
+        ...emailPayload,
+        transactionReference: order.requestForm.transactionReference,
+        whatsappClient: order.requestForm.whatsappClient,
+      },
+      formatPrice,
+    ).catch((error) => console.error("Notification paiement admin echouee:", error));
+  }
+
+  if (status === "PAYEE" && existing.status !== "PAYEE") {
+    void notifyClientPaymentConfirmed(emailPayload).catch((error) => console.error("Notification client paiement echouee:", error));
+  }
+
+  return order;
 }
 
 export async function addDeliverable(id: string, input: Pick<Deliverable, "fileUrl" | "format">) {

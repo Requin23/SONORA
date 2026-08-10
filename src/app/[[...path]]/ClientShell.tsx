@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { EXPRESS_SURCHARGE, formatPrice, getOccasion, getOffer, occasions, offers, statusLabels, type Order, type RequestForm } from "@/lib/sonora";
+import { validateOrderRequest } from "@/lib/validation";
 
 type Props = {
   path: string[];
@@ -24,6 +25,8 @@ const statusFlow = ["EN_VERIFICATION", "PAYEE", "EN_PRODUCTION", "EN_REVISION", 
 const adminStatusOptions = ["EN_ATTENTE", ...statusFlow] as const;
 
 type AuthUser = { id: string; email: string; name?: string };
+
+const adminOrderSignature = (order: Order) => `${order.id}:${order.status}:${order.updatedAt}:${order.requestForm.transactionReference ?? ""}`;
 
 export default function ClientShell({ path }: Props) {
   const route = `/${path.join("/")}`;
@@ -51,14 +54,27 @@ export default function ClientShell({ path }: Props) {
     commandeExpress: false,
   });
   const [message, setMessage] = useState("");
+  const [adminLiveNotice, setAdminLiveNotice] = useState("");
+  const adminSnapshotRef = useRef("");
   const [activeOrderId, setActiveOrderId] = useState(path[1] ?? "");
   const whatsappUrl =
     process.env.NEXT_PUBLIC_WHATSAPP_URL ??
     "https://wa.me/22671062285?text=Bonjour%20Sonora%2C%20je%20veux%20commander%20une%20chanson%20personnalis%C3%A9e.";
   const manualPaymentNumber = process.env.NEXT_PUBLIC_MANUAL_PAYMENT_NUMBER ?? "+22606387575";
+  const manualPaymentName = process.env.NEXT_PUBLIC_MANUAL_PAYMENT_NAME ?? "Sonora";
 
   useEffect(() => {
     void bootstrap();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route]);
+  useEffect(() => {
+    if (!route.startsWith("/admin")) return;
+
+    const timer = window.setInterval(() => {
+      void refreshAdminOrdersLive();
+    }, 12000);
+
+    return () => window.clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [route]);
 
@@ -87,8 +103,48 @@ export default function ClientShell({ path }: Props) {
     const response = await fetch(endpoint, { cache: "no-store" });
     if (response.ok) {
       const data = (await response.json()) as { orders: Order[] };
+      if (endpoint === "/api/admin/orders") {
+        adminSnapshotRef.current = data.orders.map(adminOrderSignature).join("|");
+      }
       setOrders(data.orders);
     }
+  }
+
+  async function refreshAdminOrdersLive() {
+    const response = await fetch("/api/admin/orders", { cache: "no-store" });
+    if (!response.ok) return;
+
+    const data = (await response.json()) as { orders: Order[] };
+    const previousSnapshot = adminSnapshotRef.current;
+    const nextSnapshot = data.orders.map(adminOrderSignature).join("|");
+
+    if (previousSnapshot && previousSnapshot !== nextSnapshot) {
+      const previous = new Set(previousSnapshot.split("|"));
+      const changedOrders = data.orders.filter((order) => !previous.has(adminOrderSignature(order)));
+      const verificationCount = changedOrders.filter((order) => order.status === "EN_VERIFICATION").length;
+      const label = verificationCount > 0
+        ? `${verificationCount} paiement${verificationCount > 1 ? "s" : ""} a verifier`
+        : `${changedOrders.length} mise${changedOrders.length > 1 ? "s" : ""} a jour commande`;
+      setAdminLiveNotice(label);
+      setMessage(`Admin mis a jour : ${label}.`);
+      if (typeof document !== "undefined") document.title = `(${changedOrders.length}) Sonora Admin`;
+      if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+        new Notification("Sonora Admin", { body: label, tag: "sonora-admin-orders" });
+      }
+    }
+
+    adminSnapshotRef.current = nextSnapshot;
+    setOrders(data.orders);
+  }
+
+  async function enableAdminBrowserAlerts() {
+    if (typeof Notification === "undefined") {
+      setMessage("Ce navigateur ne supporte pas les notifications.");
+      return;
+    }
+
+    const permission = await Notification.requestPermission();
+    setMessage(permission === "granted" ? "Alertes navigateur activees pour l'admin." : "Alertes navigateur non activees.");
   }
 
   const activeOrder = useMemo(
@@ -148,8 +204,13 @@ export default function ClientShell({ path }: Props) {
       router.push("/connexion");
       return;
     }
-    if (!form.destinataire || !form.whatsappClient || !form.genreMusical) {
-      setMessage("Renseigne au minimum le destinataire, le WhatsApp client et le style musical.");
+    const validationErrors = validateOrderRequest({
+      offerId: currentOffer.id,
+      occasionId: currentOccasion.id,
+      requestForm: form,
+    });
+    if (validationErrors.length) {
+      setMessage(validationErrors[0]);
       return;
     }
     const response = await fetch("/api/orders", {
@@ -287,7 +348,7 @@ export default function ClientShell({ path }: Props) {
         />
       )}
       {path[0] === "commande" && path[2] === "paiement" && activeOrder && (
-        <Payment order={activeOrder} manualPaymentNumber={manualPaymentNumber} submitManualPayment={submitManualPayment} />
+        <Payment order={activeOrder} manualPaymentName={manualPaymentName} manualPaymentNumber={manualPaymentNumber} submitManualPayment={submitManualPayment} />
       )}
       {path[0] === "commande" && path[2] === "suivi" && activeOrder && <Tracking order={activeOrder} />}
       {route === "/premium" && <Premium />}
@@ -299,7 +360,7 @@ export default function ClientShell({ path }: Props) {
         <OrderDetail order={activeOrder} requestRevision={requestRevision} />
       )}
       {route === "/admin" && (
-        <Admin orders={orders} updateStatus={updateStatus} addDeliverable={addDeliverable} setActiveOrderId={setActiveOrderId} />
+        <Admin orders={orders} liveNotice={adminLiveNotice} enableBrowserAlerts={enableAdminBrowserAlerts} updateStatus={updateStatus} addDeliverable={addDeliverable} setActiveOrderId={setActiveOrderId} />
       )}
       {route === "/faq" && <StaticPage title="FAQ" body="Paiement Mobile Money, carte, livraison MP3/WAV et révisions sont suivis depuis votre compte." />}
       {route === "/a-propos" && <StaticPage title="À propos" body="Sonora transforme les histoires personnelles en chansons créées manuellement avec Suno, puis contrôlées et livrées par un humain." />}
@@ -367,7 +428,7 @@ function AuthForm({
               "Un compte permet de sauvegarder votre brief, suivre le paiement, demander une révision et récupérer les fichiers livrés."}
           </p>
           <div className="auth-list">
-            <span>Suivi clair après paiement YengaPay</span>
+            <span>Suivi clair après paiement Mobile Money</span>
             <span>Historique de commandes centralisé</span>
             <span>Livraison MP3 ou WAV depuis votre espace</span>
           </div>
@@ -492,7 +553,7 @@ function Home() {
           <h2>Les réponses avant de commander.</h2>
         </div>
         <div className="process-list">
-          <FaqItem question="Comment se passe le paiement ?" answer="La commande est créée dans votre compte, puis le paiement se fait via YengaPay avec Mobile Money ou carte." />
+          <FaqItem question="Comment se passe le paiement ?" answer="La commande est créée dans votre compte, puis vous envoyez le montant exact par Mobile Money et indiquez la référence de transaction." />
           <FaqItem question="Quand vais-je recevoir ma chanson ?" answer="Le délai dépend de l'offre choisie. Le statut reste visible dans votre espace client." />
           <FaqItem question="Puis-je demander une modification ?" answer="Oui. Les révisions incluses sont indiquées dans l'offre et se demandent directement depuis la fiche commande." />
         </div>
@@ -602,11 +663,19 @@ function OrderWizard(props: {
   const setField = (key: keyof RequestForm, value: string | number | boolean) => props.setForm({ ...props.form, [key]: value });
   const expressPrice = offer.price + (props.form.commandeExpress ? EXPRESS_SURCHARGE : 0);
   function validateStep() {
-    if (props.step === 0 && !props.form.destinataire?.trim()) return "Indiquez le destinataire de la chanson.";
-    if (props.step === 0 && !props.form.whatsappClient?.trim()) return "Indiquez le numéro WhatsApp du client.";
+    if (props.step === 0) {
+      const errors = validateOrderRequest({ offerId: props.selectedOffer, occasionId: props.selectedOccasion, requestForm: props.form })
+        .filter((error) => error.includes("destinataire") || error.includes("WhatsApp") || error.includes("occasion"));
+      return errors[0] ?? "";
+    }
     if (props.step === 1 && !props.form.genreMusical?.trim()) return "Indiquez au moins un style musical.";
+    if (props.step === 1 && !props.form.langueChanson?.trim()) return "Choisissez la langue de la chanson.";
+    if (props.step === 1 && !props.form.typeVoix?.trim()) return "Choisissez le type de voix.";
     if (props.step === 2 && !props.form.anecdotes?.trim() && !props.form.paroles?.trim()) {
-      return "Ajoutez au moins une anecdote, un souvenir ou une phrase à inclure.";
+      return "Ajoutez au moins une anecdote, un souvenir ou une phrase a inclure.";
+    }
+    if (props.step === 5) {
+      return validateOrderRequest({ offerId: props.selectedOffer, occasionId: props.selectedOccasion, requestForm: props.form })[0] ?? "";
     }
     return "";
   }
@@ -636,7 +705,7 @@ function OrderWizard(props: {
         <p>Chaque information aide l'équipe à produire une chanson plus juste. Vous pourrez relire le récapitulatif avant paiement.</p>
       </div>
       <div className="trust-row">
-        <span>Paiement sécurisé avec YengaPay</span>
+        <span>Paiement Mobile Money vérifié manuellement</span>
         <span>Suivi depuis votre compte</span>
         <span>Révisions incluses selon l'offre</span>
       </div>
@@ -661,14 +730,18 @@ function OrderWizard(props: {
 
 function Payment({
   order,
+  manualPaymentName,
   manualPaymentNumber,
   submitManualPayment,
 }: {
   order: Order;
+  manualPaymentName: string;
   manualPaymentNumber: string;
   submitManualPayment: (id: string, transactionReference: string) => void;
 }) {
   const [transactionReference, setTransactionReference] = useState(order.requestForm.transactionReference ?? "");
+  const whatsappReference = order.requestForm.whatsappClient || "votre numéro WhatsApp";
+
   return (
     <section className="section">
       <div className="section-heading">
@@ -676,7 +749,7 @@ function Payment({
           <p className="eyebrow">Paiement Mobile Money</p>
           <h1>Finaliser la commande</h1>
         </div>
-        <p>Envoyez le montant exact, puis collez la référence de transaction pour que Sonora vérifie le paiement.</p>
+        <p>Envoyez le montant exact, puis collez la référence de transaction. La vérification prend généralement 10 à 30 minutes.</p>
       </div>
 
       <article className="order-card payment-card">
@@ -686,25 +759,38 @@ function Payment({
             <strong>{order.id}</strong>
           </div>
           <div>
-            <span>Montant à payer</span>
+            <span>Montant exact</span>
             <strong>{formatPrice(order.price)}</strong>
           </div>
+          <div>
+            <span>Bénéficiaire</span>
+            <strong>{manualPaymentName}</strong>
+          </div>
+        </div>
+
+        <div className="payment-instructions">
           <div>
             <span>Numéro Mobile Money</span>
             <strong>{manualPaymentNumber}</strong>
           </div>
+          <ol>
+            <li>Envoyez exactement {formatPrice(order.price)} au numéro ci-dessus.</li>
+            <li>Mettez {whatsappReference} en note/référence si votre application le permet.</li>
+            <li>Copiez la référence de transaction reçue par SMS ou dans l'application.</li>
+            <li>Cliquez sur “J’ai payé” pour prévenir Sonora.</li>
+          </ol>
         </div>
 
         {order.status === "EN_VERIFICATION" ? (
           <div className="form-alert">
-            Référence envoyée : {order.requestForm.transactionReference}. Le paiement est en vérification.
+            Référence envoyée : {order.requestForm.transactionReference}. Paiement en vérification, réponse estimée sous 10 à 30 minutes.
           </div>
         ) : (
           <div className="form-grid">
             <Input label="Référence de transaction" value={transactionReference} onChange={setTransactionReference} />
             <article className="summary">
-              <h3>Après le transfert</h3>
-              <p>Vérifiez bien que le montant envoyé correspond à {formatPrice(order.price)}.</p>
+              <h3>Avant de valider</h3>
+              <p>Vérifiez le montant, le numéro bénéficiaire et la référence. Une mauvaise référence peut retarder la production.</p>
               <button className="button primary" onClick={() => submitManualPayment(order.id, transactionReference)}>
                 J&apos;ai payé
               </button>
@@ -715,7 +801,6 @@ function Payment({
     </section>
   );
 }
-
 function Tracking({ order }: { order: Order }) {
   return <section className="section"><h1>Suivi</h1><p className={statusBadgeClass(order.status)}>{statusLabels[order.status]}</p><p>Deadline : {order.deadline ? new Date(order.deadline).toLocaleDateString("fr-FR") : "après paiement"}</p></section>;
 }
@@ -861,13 +946,16 @@ function BriefItem({ label, value, wide }: { label: string; value?: string; wide
   );
 }
 
-function Admin({ orders, updateStatus, addDeliverable, setActiveOrderId }: { orders: Order[]; updateStatus: (id: string, status: string) => void; addDeliverable: (id: string, fileUrl: string, format: "mp3" | "wav") => void; setActiveOrderId: (id: string) => void }) {
+function Admin({ orders, liveNotice, enableBrowserAlerts, updateStatus, addDeliverable, setActiveOrderId }: { orders: Order[]; liveNotice: string; enableBrowserAlerts: () => void; updateStatus: (id: string, status: string) => void; addDeliverable: (id: string, fileUrl: string, format: "mp3" | "wav") => void; setActiveOrderId: (id: string) => void }) {
   const [statusFilter, setStatusFilter] = useState<"TOUS" | Order["status"]>("TOUS");
   const [urgentOnly, setUrgentOnly] = useState(false);
   const filteredOrders = orders
     .filter((order) => statusFilter === "TOUS" || order.status === statusFilter)
     .filter((order) => !urgentOnly || isUrgentOrder(order))
     .sort((a, b) => urgencyScore(b) - urgencyScore(a));
+  const verificationCount = orders.filter((order) => order.status === "EN_VERIFICATION").length;
+  const paidCount = orders.filter((order) => order.status === "PAYEE").length;
+  const productionCount = orders.filter((order) => order.status === "EN_PRODUCTION").length;
 
   return (
     <section className="section">
@@ -877,6 +965,20 @@ function Admin({ orders, updateStatus, addDeliverable, setActiveOrderId }: { ord
           <h1>Admin</h1>
         </div>
         <p>File triée pour mieux repérer les commandes urgentes, les paiements confirmés et les briefs à produire.</p>
+      </div>
+
+      <div className="admin-live-bar">
+        <div>
+          <strong>Admin live</strong>
+          <span>{liveNotice || "Actualisation automatique toutes les 12 secondes"}</span>
+        </div>
+        <button className="button" onClick={enableBrowserAlerts}>Activer alertes navigateur</button>
+      </div>
+
+      <div className="admin-stats">
+        <Metric label="À vérifier" value={String(verificationCount)} />
+        <Metric label="Payées" value={String(paidCount)} />
+        <Metric label="Production" value={String(productionCount)} />
       </div>
 
       <div className="admin-toolbar">
@@ -923,6 +1025,16 @@ function AdminOrderRow({
     setFileUrl("");
   }
 
+  const whatsappDigits = (form.whatsappClient ?? "").replace(/\D/g, "");
+  const normalizedWhatsapp = whatsappDigits
+    ? whatsappDigits.startsWith("226")
+      ? whatsappDigits
+      : `226${whatsappDigits}`
+    : "";
+  const whatsappContactUrl = normalizedWhatsapp
+    ? `https://wa.me/${normalizedWhatsapp}?text=${encodeURIComponent(`Bonjour, ici Sonora. Nous vérifions votre paiement pour la commande ${order.id}.`)}`
+    : "";
+
   return (
     <article className="admin-row">
       <div className="admin-row-head">
@@ -959,11 +1071,29 @@ function AdminOrderRow({
       </div>
 
       {order.status === "EN_VERIFICATION" && (
-        <div className="payment-confirm">
-          <strong>Référence de transaction : {form.transactionReference || "Non renseignée"}</strong>
-          <button className="button primary" onClick={() => updateStatus(order.id, "PAYEE")}>
-            Confirmer paiement reçu
-          </button>
+        <div className="payment-confirm admin-payment-check">
+          <div>
+            <span>Référence transaction</span>
+            <strong>{form.transactionReference || "Non renseignée"}</strong>
+          </div>
+          <div>
+            <span>Montant attendu</span>
+            <strong>{formatPrice(order.price)}</strong>
+          </div>
+          <div>
+            <span>Client</span>
+            <strong>{form.destinataire || order.userEmail}</strong>
+          </div>
+          <div>
+            <span>WhatsApp</span>
+            <strong>{form.whatsappClient || "Non renseigné"}</strong>
+          </div>
+          <div className="payment-confirm-actions">
+            {whatsappContactUrl ? <a className="button" href={whatsappContactUrl} target="_blank" rel="noreferrer">Contacter WhatsApp</a> : null}
+            <button className="button primary" onClick={() => updateStatus(order.id, "PAYEE")}>
+              Confirmer paiement reçu
+            </button>
+          </div>
         </div>
       )}
 

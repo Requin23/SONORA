@@ -840,6 +840,85 @@ textarea {
   max-width: 860px;
 }
 
+.payment-instructions {
+  background: var(--panel-strong);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 16px;
+  margin-bottom: 18px;
+  padding: 16px;
+}
+
+.payment-instructions span,
+.payment-confirm span {
+  color: var(--muted);
+  display: block;
+  font-size: 12px;
+  font-weight: 900;
+  margin-bottom: 5px;
+  text-transform: uppercase;
+}
+
+.payment-instructions strong {
+  color: var(--accent-strong);
+  display: block;
+  font-size: clamp(24px, 4vw, 38px);
+  overflow-wrap: anywhere;
+}
+
+.payment-instructions ol {
+  color: var(--muted);
+  line-height: 1.55;
+  margin: 0;
+  padding-left: 20px;
+}
+
+.admin-live-bar {
+  align-items: center;
+  background: #ecfdf5;
+  border: 1px solid #86efac;
+  border-radius: 8px;
+  color: #14532d;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  margin-bottom: 14px;
+  padding: 14px 16px;
+}
+
+.admin-live-bar strong,
+.admin-live-bar span {
+  display: block;
+}
+
+.admin-live-bar span {
+  color: #166534;
+  font-size: 14px;
+  margin-top: 4px;
+}
+
+.admin-stats {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 14px;
+}
+
+.admin-payment-check {
+  align-items: stretch;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+}
+
+.payment-confirm-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
 .payment-confirm {
   align-items: center;
   background: #fef3c7;
@@ -852,6 +931,12 @@ textarea {
   justify-content: space-between;
   margin-top: 14px;
   padding: 14px;
+}
+
+.payment-confirm.admin-payment-check {
+  align-items: stretch;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
 }
 
 .table {
@@ -971,8 +1056,15 @@ pre {
   .brief-grid,
   .brief-grid.compact,
   .admin-row-head,
-  .timeline {
+  .timeline,
+  .admin-stats,
+  .admin-payment-check {
     grid-template-columns: 1fr;
+  }
+
+  .admin-live-bar {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .section-heading {

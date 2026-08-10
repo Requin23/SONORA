@@ -22,8 +22,10 @@ import {
   verifyUserCredentials,
 } from "@/lib/auth";
 import { isValidBasicAuth } from "@/lib/adminAuth";
+import { validateOrderRequest } from "@/lib/validation";
 
 const json = (data: unknown, status = 200) => NextResponse.json(data, { status });
+const allowedOrderStatuses: OrderStatus[] = ["EN_ATTENTE", "EN_VERIFICATION", "PAYEE", "EN_PRODUCTION", "EN_REVISION", "LIVREE", "ANNULEE"];
 
 const pathOf = async (context: { params: Promise<{ path?: string[] }> }) => {
   const { path = [] } = await context.params;
@@ -122,6 +124,15 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pa
       // client ne peut pas creer une commande au nom de quelqu'un d'autre.
       const session = await getSessionFromCookies();
       if (!session) return json({ error: "Connexion requise" }, 401);
+      const validationErrors = validateOrderRequest({
+        offerId: body.offerId,
+        occasionId: body.occasionId,
+        requestForm: body.requestForm,
+      });
+      if (validationErrors.length) {
+        return json({ error: validationErrors[0], errors: validationErrors }, 400);
+      }
+
       const order = await createOrder({
         offerId: body.offerId,
         occasionId: body.occasionId,
@@ -220,6 +231,9 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ p
       if (!existing) return json({ error: "Commande introuvable" }, 404);
 
       const nextStatus = body.status as OrderStatus;
+      if (!allowedOrderStatuses.includes(nextStatus)) {
+        return json({ error: "Statut invalide" }, 400);
+      }
       const isAdmin = isValidBasicAuth(request.headers.get("authorization"));
 
       if (nextStatus === "EN_VERIFICATION") {
@@ -232,7 +246,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ p
         }
 
         const transactionReference = String(body.transactionReference ?? "").trim();
-        if (!transactionReference) {
+        if (!transactionReference || transactionReference.length < 4) {
           return json({ error: "Reference de transaction requise" }, 400);
         }
 

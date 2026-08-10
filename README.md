@@ -1,36 +1,79 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# SONORA
 
-## Getting Started
+Plateforme Next.js pour vendre des chansons personnalisees : vitrine, commande client, paiement Mobile Money manuel, espace client et dashboard admin.
 
-First, run the development server:
+## Demarrage local
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Ouvrir http://localhost:3000.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Variables importantes sur Vercel
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Copier les valeurs de `.env.example`, puis definir au minimum :
 
-## Learn More
+```env
+DATABASE_URL=postgresql://...
+NEXT_PUBLIC_APP_URL=https://ton-site.vercel.app
+NEXT_PUBLIC_WHATSAPP_URL=https://wa.me/226...
+NEXT_PUBLIC_MANUAL_PAYMENT_NUMBER=+22606387575
+NEXT_PUBLIC_MANUAL_PAYMENT_NAME=Sonora
+ADMIN_USER=admin
+ADMIN_PASSWORD=mot-de-passe-fort
+RESEND_API_KEY=...
+EMAIL_FROM="Sonora <commandes@tondomaine.com>"
+ADMIN_NOTIFICATION_EMAILS=admin@example.com
+NEXT_PUBLIC_ENABLE_DEV_TOOLS=false
+```
 
-To learn more about Next.js, take a look at the following resources:
+## Base de donnees
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Le projet utilise Prisma + PostgreSQL. En production, utiliser Neon, Supabase, Railway ou une base Postgres equivalente.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Apres configuration de `DATABASE_URL` :
 
-## Deploy on Vercel
+```bash
+npx prisma generate
+npx prisma migrate deploy
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Sur Vercel, garde `postinstall=prisma generate` et lance les migrations depuis ton terminal ou ton provider DB avant d'ouvrir le site au public.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Flux paiement manuel
+
+1. Le client cree une commande.
+2. Il paie par Mobile Money au numero configure.
+3. Il ajoute la reference de transaction.
+4. La commande passe en `EN_VERIFICATION`.
+5. L'admin verifie le paiement, puis clique sur `Confirmer paiement recu`.
+6. La commande passe en `PAYEE`, une deadline est calculee, et le client recoit un email si Resend est configure.
+
+## Admin
+
+L'espace `/admin` est protege par Basic Auth via `ADMIN_USER` et `ADMIN_PASSWORD`.
+
+Le changement de statut est recontrole cote API : le client peut seulement passer sa propre commande de `EN_ATTENTE` a `EN_VERIFICATION`; les autres changements sont reserves a l'admin.
+## Notifications email Resend
+
+Le fichier CSV fourni contient des cles Resend. Utilise la cle nommee `SONORA` dans Vercel :
+
+```env
+RESEND_API_KEY=coller-la-cle-sonora-ici
+EMAIL_FROM="Sonora <onboarding@resend.dev>"
+ADMIN_NOTIFICATION_EMAILS=ton-email-admin@example.com
+```
+
+Pour une vraie adresse d'expedition comme `commandes@sonora...`, il faudra verifier le domaine dans Resend. En attendant, `onboarding@resend.dev` permet de tester.
+
+## Notifications realtime admin
+
+Le dashboard `/admin` se rafraichit automatiquement toutes les 12 secondes. Quand une commande change ou qu'un paiement passe en verification, l'admin voit :
+
+- un message dans le site
+- le titre de l'onglet modifie
+- une notification navigateur si le bouton `Activer alertes navigateur` a ete clique
+
+Cela fonctionne sur Vercel sans WebSocket. Pour du vrai push instantane multi-admin, l'etape suivante serait Supabase Realtime, Pusher ou Ably.
