@@ -13,7 +13,7 @@ export function validateOrderRequest(input: {
 }) {
   const errors: string[] = [];
   const form = input.requestForm ?? {};
-  const phoneDigits = normalizePhone(form.whatsappClient);
+const phoneDigits = normalizePhone(form.whatsapp);
 
   if (!input.offerId || !getOffer(input.offerId)) {
     errors.push("Choisis une offre valide.");
