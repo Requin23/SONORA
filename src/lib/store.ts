@@ -1,9 +1,8 @@
 import type { Order as PrismaOrder } from "@prisma/client";
 import { prisma } from "./prisma";
-import { addDays, formatPrice, getOccasion, getOffer, type Deliverable, type Order, type OrderStatus, type RequestForm } from "./sonora";
+import { EXPRESS_SURCHARGE, addDays, formatPrice, getOccasion, getOffer, type Deliverable, type Order, type OrderStatus, type RequestForm } from "./sonora";
 import { createPaymentIntent } from "./yengapay";
-import { createInvoice as createPaydunyaInvoice } from "./paydunya";
-import { notifyAdminsNewOrder, notifyClientDelivery } from "./email";
+import { notifyAdminsNewOrder, notifyAdminsPaymentVerification, notifyClientDelivery, notifyClientOrderCreated, notifyClientPaymentConfirmed } from "./email";
 
 const publicId = (prefix: string) => `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 
@@ -64,6 +63,8 @@ export async function createOrder(input: {
 }) {
   const offer = getOffer(input.offerId);
   if (!offer) throw new Error("Offre introuvable");
+  const requestForm = input.requestForm ?? {};
+  const finalPrice = offer.price + (requestForm.commandeExpress ? EXPRESS_SURCHARGE : 0);
 
   const row = await prisma.order.create({
     data: {
@@ -73,8 +74,8 @@ export async function createOrder(input: {
       offerId: offer.id,
       occasionId: input.occasionId,
       status: "EN_ATTENTE",
-      requestForm: (input.requestForm ?? {}) as object,
-      price: offer.price,
+      requestForm: requestForm as object,
+      price: finalPrice,
       deliverables: [],
       revisionsUsed: 0,
     },
@@ -82,20 +83,19 @@ export async function createOrder(input: {
 
   const order = toOrder(row);
 
-  // Notification email aux admins : ne doit jamais faire echouer la creation
-  // de commande si l'envoi rate (config manquante, API down...).
-  void notifyAdminsNewOrder(
-    {
-      id: order.id,
-      userEmail: order.userEmail,
-      userName: order.userName,
-      offerName: offer.name,
-      price: order.price,
-      occasionName: getOccasion(input.occasionId)?.name,
-      whatsapp: input.requestForm?.whatsapp,
-    },
-    formatPrice,
-  ).catch((error) => console.error("Notification admin echouee:", error));
+  const emailPayload = {
+    id: order.id,
+    userEmail: order.userEmail,
+    userName: order.userName,
+    offerName: offer.name,
+    price: order.price,
+    occasionName: getOccasion(input.occasionId)?.name,
+  };
+
+  // Les notifications ne doivent jamais faire echouer la creation de commande
+  // si l'email est mal configure ou temporairement indisponible.
+  void notifyAdminsNewOrder(emailPayload, formatPrice).catch((error) => console.error("Notification admin echouee:", error));
+  void notifyClientOrderCreated(emailPayload, formatPrice).catch((error) => console.error("Notification client commande echouee:", error));
 
   return order;
 }
@@ -111,83 +111,47 @@ export async function updateOrderForm(id: string, requestForm: RequestForm) {
   return toOrder(row);
 }
 
-export async function markCheckoutStarted(
-  id: string,
-  paymentMethod = "mobile_money",
-  customerNumber?: string,
-  provider: "yengapay" | "paydunya" = "yengapay",
-) {
+export async function markCheckoutStarted(id: string, paymentMethod = "mobile_money", customerNumber?: string) {
   const existing = await prisma.order.findUnique({ where: { id } });
   if (!existing) throw new Error("Commande introuvable");
 
   const offer = getOffer(existing.offerId);
 
-  // Reutilise un checkout deja cree pour cette commande s'il existe, sinon on
-  // en cree un nouveau (selon le provider choisi par le client).
-  if (existing.status !== "EN_ATTENTE" && existing.yengapayCheckoutUrl) {
-    return { order: toOrder(existing), paymentUrl: existing.yengapayCheckoutUrl };
-  }
+  let paymentIntentId = existing.yengapayPaymentIntentId ?? undefined;
+  let checkoutUrl = existing.yengapayCheckoutUrl ?? undefined;
 
-  // Montant interne Sonora en centimes de FCFA -> XOF entier pour les API.
-  const amountXof = Math.round(existing.price / 100);
-
-  if (provider === "paydunya") {
-    const invoice = await createPaydunyaInvoice({
-      totalAmount: amountXof,
+  // Reutilise le paiement YengaPay existant s'il n'a pas encore ete finalise,
+  // sinon on en cree un nouveau (le montant Sonora est stocke en centimes de
+  // FCFA en interne, alors que YengaPay attend un montant en FCFA entier).
+  if (existing.status === "EN_ATTENTE" || !checkoutUrl) {
+    const intent = await createPaymentIntent({
+      amount: Math.round(existing.price / 100),
       reference: existing.id,
-      description: `Sonora - ${offer?.name ?? "Chanson personnalisee"}`,
-      customerName: existing.userName ?? undefined,
-      customerEmail: existing.userEmail,
-      customerPhone: customerNumber ?? (existing.requestForm as RequestForm | null)?.whatsapp ?? undefined,
-      items: [
+      customerNumber,
+      articles: [
         {
-          name: `Sonora - ${offer?.name ?? "Chanson personnalisee"}`,
-          quantity: 1,
-          unitPrice: amountXof,
-          totalPrice: amountXof,
+          title: `Sonora - ${offer?.name ?? "Chanson personnalisee"}`,
+          description: `Commande ${existing.id}`,
+          price: Math.round(existing.price / 100),
         },
       ],
     });
-
-    const row = await prisma.order.update({
-      where: { id },
-      data: {
-        provider: "paydunya",
-        paymentMethod,
-        yengapayPaymentIntentId: invoice.token,
-        yengapayCheckoutUrl: invoice.url,
-      },
-    });
-    return { order: toOrder(row), paymentUrl: invoice.url };
+    paymentIntentId = intent.id;
+    checkoutUrl = intent.checkoutPageUrlWithPaymentToken;
   }
-
-  // Provider par defaut : YengaPay.
-  const intent = await createPaymentIntent({
-    amount: amountXof,
-    reference: existing.id,
-    customerNumber,
-    articles: [
-      {
-        title: `Sonora - ${offer?.name ?? "Chanson personnalisee"}`,
-        description: `Commande ${existing.id}`,
-        price: amountXof,
-      },
-    ],
-  });
 
   const row = await prisma.order.update({
     where: { id },
     data: {
-      provider: "yengapay",
-      yengapayPaymentIntentId: intent.id,
-      yengapayCheckoutUrl: intent.checkoutPageUrlWithPaymentToken,
+      yengapayPaymentIntentId: paymentIntentId,
+      yengapayCheckoutUrl: checkoutUrl,
       paymentMethod,
     },
   });
 
   return {
     order: toOrder(row),
-    paymentUrl: intent.checkoutPageUrlWithPaymentToken,
+    paymentUrl: checkoutUrl,
   };
 }
 
@@ -215,10 +179,56 @@ export async function confirmPayment(id: string, transactionId?: string, payment
   return toOrder(row);
 }
 
-export async function updateOrderStatus(id: string, status: OrderStatus) {
-  const row = await prisma.order.update({ where: { id }, data: { status } }).catch(() => null);
-  if (!row) throw new Error("Commande introuvable");
-  return toOrder(row);
+export async function updateOrderStatus(id: string, status: OrderStatus, requestFormPatch?: Partial<RequestForm>) {
+  const existing = await prisma.order.findUnique({ where: { id } });
+  if (!existing) throw new Error("Commande introuvable");
+
+  const form = (existing.requestForm as RequestForm | null) ?? {};
+  const offer = getOffer(existing.offerId);
+  const data: {
+    status: OrderStatus;
+    requestForm?: object;
+    deadline?: string;
+    paymentMethod?: string;
+  } = { status };
+
+  if (requestFormPatch) {
+    data.requestForm = { ...form, ...requestFormPatch };
+  }
+
+  if (status === "PAYEE" && existing.status !== "PAYEE") {
+    data.deadline = addDays(new Date(), offer?.deliveryDays ?? 7);
+    data.paymentMethod = existing.paymentMethod ?? "manual_mobile_money";
+  }
+
+  const row = await prisma.order.update({ where: { id }, data });
+  const order = toOrder(row);
+
+  const emailPayload = {
+    id: order.id,
+    userEmail: order.userEmail,
+    userName: order.userName,
+    offerName: offer?.name ?? order.offerId,
+    price: order.price,
+    occasionName: getOccasion(order.occasionId)?.name,
+  };
+
+  if (status === "EN_VERIFICATION" && requestFormPatch?.transactionReference) {
+    void notifyAdminsPaymentVerification(
+      {
+        ...emailPayload,
+        transactionReference: order.requestForm.transactionReference,
+        whatsappClient: order.requestForm.whatsappClient,
+      },
+      formatPrice,
+    ).catch((error) => console.error("Notification paiement admin echouee:", error));
+  }
+
+  if (status === "PAYEE" && existing.status !== "PAYEE") {
+    void notifyClientPaymentConfirmed(emailPayload).catch((error) => console.error("Notification client paiement echouee:", error));
+  }
+
+  return order;
 }
 
 export async function addDeliverable(id: string, input: Pick<Deliverable, "fileUrl" | "format">) {

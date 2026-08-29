@@ -13,7 +13,6 @@ import {
   updateOrderStatus,
 } from "@/lib/store";
 import { verifyWebhookSecret } from "@/lib/yengapay";
-import { verifyWebhook as verifyPaydunyaWebhook } from "@/lib/paydunya";
 import {
   clearSessionCookie,
   createSessionToken,
@@ -23,8 +22,10 @@ import {
   verifyUserCredentials,
 } from "@/lib/auth";
 import { isValidBasicAuth } from "@/lib/adminAuth";
+import { validateOrderRequest } from "@/lib/validation";
 
 const json = (data: unknown, status = 200) => NextResponse.json(data, { status });
+const allowedOrderStatuses: OrderStatus[] = ["EN_ATTENTE", "EN_VERIFICATION", "PAYEE", "EN_PRODUCTION", "EN_REVISION", "LIVREE", "ANNULEE"];
 
 const pathOf = async (context: { params: Promise<{ path?: string[] }> }) => {
   const { path = [] } = await context.params;
@@ -123,6 +124,15 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pa
       // client ne peut pas creer une commande au nom de quelqu'un d'autre.
       const session = await getSessionFromCookies();
       if (!session) return json({ error: "Connexion requise" }, 401);
+      const validationErrors = validateOrderRequest({
+        offerId: body.offerId,
+        occasionId: body.occasionId,
+        requestForm: body.requestForm,
+      });
+      if (validationErrors.length) {
+        return json({ error: validationErrors[0], errors: validationErrors }, 400);
+      }
+
       const order = await createOrder({
         offerId: body.offerId,
         occasionId: body.occasionId,
@@ -139,8 +149,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pa
       if (!(await isAuthorizedForOrder(request, existing.userEmail))) {
         return json({ error: "Non autorise" }, 403);
       }
-      const provider: "yengapay" | "paydunya" = body.provider === "paydunya" ? "paydunya" : "yengapay";
-      return json(await markCheckoutStarted(path[1], body.paymentMethod, body.customerNumber, provider));
+      return json(await markCheckoutStarted(path[1], body.paymentMethod, body.customerNumber));
     }
 
     if (path.join("/") === "webhooks/yengapay") {
@@ -171,35 +180,6 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pa
 
       const order = await confirmPayment(orderId ?? "", paymentIntentId, body.paymentSource ?? body.paymentMethod);
       console.info("Notification admin: nouvelle commande payee", order.id);
-      return json({ order });
-    }
-
-    if (path.join("/") === "webhooks/paydunya") {
-      // IPN PayDunya : notification serveur-à-serveur signee (HMAC-SHA512).
-      // On verifie la signature AVANT toute action. En production, sans secret
-      // configure, verifyWebhook renvoie false (fail-closed) -> on refuse.
-      const payload = (body ?? {}) as Record<string, unknown>;
-      if (!verifyPaydunyaWebhook(payload)) {
-        return json({ error: "Signature IPN invalide" }, 401);
-      }
-
-      // PayDunya renvoie invoice_token + status ("completed" en cas de succes).
-      const token: string | undefined = payload.invoice_token as string | undefined;
-      const orderId: string | undefined =
-        (payload.custom_data as { order_id?: string } | undefined)?.order_id ??
-        (payload.invoice_token as string | undefined);
-      const status: string | undefined = payload.status as string | undefined;
-
-      if (!orderId || !token) {
-        return json({ error: "Impossible d'identifier la commande dans l'IPN" }, 400);
-      }
-
-      if (status && status !== "completed") {
-        return json({ ignored: true, status });
-      }
-
-      const order = await confirmPayment(orderId, token, "orange_money");
-      console.info("PayDunya: commande payee", order.id);
       return json({ order });
     }
 
@@ -247,8 +227,43 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ p
     }
 
     if (path[0] === "orders" && path[2] === "status") {
-      // Deja protege en amont par le middleware (Basic Auth admin).
-      return json({ order: await updateOrderStatus(path[1], body.status as OrderStatus) });
+      const existing = await getOrder(path[1]);
+      if (!existing) return json({ error: "Commande introuvable" }, 404);
+
+      const nextStatus = body.status as OrderStatus;
+      if (!allowedOrderStatuses.includes(nextStatus)) {
+        return json({ error: "Statut invalide" }, 400);
+      }
+      const isAdmin = isValidBasicAuth(request.headers.get("authorization"));
+
+      if (nextStatus === "EN_VERIFICATION") {
+        const session = await getSessionFromCookies();
+        if (!session || session.email !== existing.userEmail) {
+          return json({ error: "Non autorise" }, 403);
+        }
+        if (existing.status !== "EN_ATTENTE") {
+          return json({ error: "Cette commande n'attend plus de paiement" }, 400);
+        }
+
+        const transactionReference = String(body.transactionReference ?? "").trim();
+        if (!transactionReference || transactionReference.length < 4) {
+          return json({ error: "Reference de transaction requise" }, 400);
+        }
+
+        return json({
+          order: await updateOrderStatus(path[1], "EN_VERIFICATION", { transactionReference }),
+        });
+      }
+
+      if (!isAdmin) {
+        return json({ error: "Action reservee a l'admin" }, 403);
+      }
+
+      if (nextStatus === "PAYEE" && existing.status !== "EN_VERIFICATION") {
+        return json({ error: "Le paiement doit d'abord etre en verification" }, 400);
+      }
+
+      return json({ order: await updateOrderStatus(path[1], nextStatus) });
     }
 
     return json({ error: "Route inconnue" }, 404);

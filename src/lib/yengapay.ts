@@ -109,14 +109,8 @@ export async function createPaymentIntent(
 export function verifyWebhookSecret(receivedSecret: string | null | undefined) {
   const expected = process.env.YENGAPAY_WEBHOOK_SECRET;
   if (!expected) {
-    // En production, un webhook non signe est refuse (fail-closed) : sans
-    // secret partage, on ne peut pas faire confiance a la notification, donc
-    // on ne valide aucun paiement. En developpement uniquement, on tolère
-    // l'absence de secret pour permettre le simulateur de webhook.
-    if (process.env.NODE_ENV === "production") return false;
-    console.warn(
-      "[YengaPay] Aucun YENGAPAY_WEBHOOK_SECRET configure : webhook accepte SANS verification (dev uniquement).",
-    );
+    // Aucun secret configure : on n'exige pas de verification (pratique en dev,
+    // a eviter en production).
     return true;
   }
   return receivedSecret === expected;

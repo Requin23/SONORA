@@ -62,7 +62,6 @@ type OrderForEmail = {
   offerName: string;
   price: number;
   occasionName?: string;
-  whatsapp?: string;
 };
 
 export async function notifyAdminsNewOrder(order: OrderForEmail, formatPrice: (cents: number) => string) {
@@ -78,13 +77,36 @@ export async function notifyAdminsNewOrder(order: OrderForEmail, formatPrice: (c
     <p><strong>Client :</strong> ${order.userName ?? "(non renseigne)"} - ${order.userEmail}</p>
     <p><strong>Offre :</strong> ${order.offerName} (${formatPrice(order.price)})</p>
     ${order.occasionName ? `<p><strong>Occasion :</strong> ${order.occasionName}</p>` : ""}
-    ${order.whatsapp ? `<p><strong>WhatsApp :</strong> ${order.whatsapp}</p>` : ""}
     <p>Voir dans l'admin : <a href="${process.env.NEXT_PUBLIC_APP_URL ?? ""}/admin/${order.id}">${process.env.NEXT_PUBLIC_APP_URL ?? ""}/admin/${order.id}</a></p>
   `;
 
   await sendEmail(admins, `Nouvelle commande Sonora - ${order.id}`, html);
 }
 
+
+export async function notifyClientOrderCreated(order: OrderForEmail, formatPrice: (cents: number) => string) {
+  const html = `
+    <h2>Commande Sonora recue</h2>
+    <p>Bonjour ${order.userName ?? ""},</p>
+    <p>Ta commande <strong>${order.id}</strong> a bien ete creee.</p>
+    <p><strong>Offre :</strong> ${order.offerName} - ${formatPrice(order.price)}</p>
+    <p>Prochaine etape : envoie le paiement Mobile Money puis ajoute la reference de transaction dans ton espace Sonora.</p>
+    <p><a href="${process.env.NEXT_PUBLIC_APP_URL ?? ""}/commande/${order.id}/paiement">Finaliser le paiement</a></p>
+  `;
+
+  await sendEmail([order.userEmail], `Commande recue - ${order.id}`, html);
+}
+
+export async function notifyClientPaymentConfirmed(order: OrderForEmail) {
+  const html = `
+    <h2>Paiement confirme</h2>
+    <p>Bonjour ${order.userName ?? ""},</p>
+    <p>Le paiement de ta commande <strong>${order.id}</strong> est confirme. La production peut commencer.</p>
+    <p>Tu peux suivre l'avancement ici : <a href="${process.env.NEXT_PUBLIC_APP_URL ?? ""}/commande/${order.id}/suivi">Suivre ma commande</a></p>
+  `;
+
+  await sendEmail([order.userEmail], `Paiement confirme - ${order.id}`, html);
+}
 export async function notifyClientDelivery(order: OrderForEmail, fileUrl: string, format: string) {
   const html = `
     <h2>Ta chanson Sonora est prete !</h2>
@@ -95,4 +117,28 @@ export async function notifyClientDelivery(order: OrderForEmail, fileUrl: string
   `;
 
   await sendEmail([order.userEmail], `Ta chanson Sonora est prete - ${order.id}`, html);
+}
+
+export async function notifyAdminsPaymentVerification(
+  order: OrderForEmail & { transactionReference?: string; whatsappClient?: string },
+  formatPrice: (cents: number) => string,
+) {
+  const admins = getAdminEmails();
+  if (admins.length === 0) {
+    console.info("Aucun ADMIN_NOTIFICATION_EMAILS configure, notification paiement ignoree.");
+    return;
+  }
+
+  const adminUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? ""}/admin/${order.id}`;
+  const html = `
+    <h2>Paiement Sonora a verifier</h2>
+    <p><strong>Commande :</strong> ${order.id}</p>
+    <p><strong>Client :</strong> ${order.userName ?? "(non renseigne)"} - ${order.userEmail}</p>
+    <p><strong>WhatsApp :</strong> ${order.whatsappClient ?? "(non renseigne)"}</p>
+    <p><strong>Offre :</strong> ${order.offerName} (${formatPrice(order.price)})</p>
+    <p><strong>Reference transaction :</strong> ${order.transactionReference ?? "(non renseignee)"}</p>
+    <p>Confirmer dans l'admin : <a href="${adminUrl}">${adminUrl}</a></p>
+  `;
+
+  await sendEmail(admins, `Paiement a verifier - ${order.id}`, html);
 }

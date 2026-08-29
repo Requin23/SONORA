@@ -1,12 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminAccounts, isValidBasicAuth } from "@/lib/adminAuth";
 
-// Protege la page /admin, les routes API dediees admin (/api/admin/*) ainsi
-// que les deux actions d'administration exposees ailleurs dans l'API
-// (changement de statut, ajout de livrable). Le reste de l'API (creation de
-// commande, checkout, webhooks, consultation client) reste public / gere par
-// des sessions client (voir src/lib/auth.ts), puisque necessaire au parcours
-// client.
+// Protege la page /admin, les routes API dediees admin (/api/admin/*) et
+// l'ajout de livrable. Le changement de statut reste volontairement gere dans
+// la route API : un client connecte doit pouvoir passer EN_ATTENTE ->
+// EN_VERIFICATION, tandis que les statuts admin restent controles serveur.
 //
 // Auth HTTP Basic simple : suffisant pour un MVP a usage interne, mais a
 // remplacer par une vraie session/JWT si plus de 2 admins ou un vrai risque
@@ -14,7 +12,6 @@ import { getAdminAccounts, isValidBasicAuth } from "@/lib/adminAuth";
 function isProtectedRequest(pathname: string, method: string) {
   if (pathname === "/admin" || pathname.startsWith("/admin/")) return true;
   if (pathname.startsWith("/api/admin/")) return true;
-  if (method === "PATCH" && /^\/api\/orders\/[^/]+\/status$/.test(pathname)) return true;
   if (method === "POST" && /^\/api\/orders\/[^/]+\/deliverable$/.test(pathname)) return true;
   return false;
 }

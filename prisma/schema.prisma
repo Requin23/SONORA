@@ -34,7 +34,6 @@ model Order {
   yengapayPaymentIntentId String?
   yengapayCheckoutUrl     String?
   paymentMethod           String?
-  provider                String?  @default("yengapay")
   deliverables            Json      @default("[]")
   revisionsUsed           Int       @default(0)
   deadline                DateTime?
